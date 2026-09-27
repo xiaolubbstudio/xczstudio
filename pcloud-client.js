@@ -80,6 +80,15 @@
     return { name: data.metadata?.name || '素材库', folderId: data.metadata?.folderid, assets: assetsFor(data.metadata, settings) };
   }
 
+  function downloadUrl(input, asset) {
+    const settings = config(input);
+    if (!settings.folder || !asset?.cloud || !Number.isSafeInteger(asset.fileid) || asset.fileid <= 0) throw new Error('未找到可下载的云端文件，请刷新目录。');
+    const name = String(asset.name || '素材').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/g, '').slice(0, 160) || '素材';
+    // Official public ZIP streaming: select exactly one file, no login token,
+    // no full-file buffering in the page, and no download-link referrer bypass.
+    return `${settings.base}/getpubzip?${new URLSearchParams({ code: settings.folder.code, fileids: String(asset.fileid), filename: `${name}.zip`, forcedownload: '1' })}`;
+  }
+
   function requireSession(input, session) {
     const auth = root.PCloudAuth || (typeof require === 'function' ? require('./pcloud-auth.js') : null);
     if (!auth?.validSession(session, input)) throw new Error('请先登录有效的 pCloud 账号，再上传素材。');
@@ -161,7 +170,7 @@
     });
   }
 
-  const api = { parseLink, config, result, typeFor, assetsFor, list, memberAccess, profile, avatarUrl, upload };
+  const api = { parseLink, config, result, typeFor, assetsFor, list, downloadUrl, memberAccess, profile, avatarUrl, upload };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PCloudClient = api;
 })(typeof window === 'undefined' ? globalThis : window);

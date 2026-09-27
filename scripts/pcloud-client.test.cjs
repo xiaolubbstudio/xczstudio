@@ -4,6 +4,16 @@ const client = require('../pcloud-client.js');
 const settings = { folderUrl: 'https://u.pcloud.link/publink/show?code=folderCode', clientId: 'studio-app', folderId: 456, region: 'us' };
 const session = () => ({ token: 'test-token', uid: 123, clientId: settings.clientId, region: 'us', created: Date.now() });
 
+test('站内下载仅选择单个云端原文件，使用官方 ZIP 接口，不携带凭据', () => {
+  const url = new URL(client.downloadUrl({ ...settings, region: 'eu' }, { cloud: true, fileid: 12345, name: '竖图.png' }));
+  assert.equal(url.origin, 'https://eapi.pcloud.com');
+  assert.equal(url.pathname, '/getpubzip');
+  assert.deepEqual([...url.searchParams], [['code', 'folderCode'], ['fileids', '12345'], ['filename', '竖图.png.zip'], ['forcedownload', '1']]);
+  assert.equal(new URL(client.downloadUrl(settings, { cloud: true, fileid: 1, name: '../bad\r\n.png' })).searchParams.get('filename'), '.._bad__.png.zip');
+  for (const asset of [{ cloud: false, fileid: 1 }, { cloud: true, fileid: -1 }, { cloud: true, fileid: '1,2' }, { cloud: true }]) assert.throws(() => client.downloadUrl(settings, asset));
+  assert.throws(() => client.downloadUrl({ region: 'us' }, { cloud: true, fileid: 1 }));
+});
+
 test('头像只接收 pCloud 返回的官方地址，令牌不进入图片 URL；缺失头像不阻断身份验证', async () => {
   assert.equal(client.avatarUrl({ hosts: ['c1.pcloud.com'], path: '/avatar.png' }), 'https://c1.pcloud.com/avatar.png');
   for (const avatar of [null, { isdefault: true }, { hosts: ['pcloud.com.evil.example'], path: '/a' }, { hosts: ['api.pcloud.com'], path: '//evil.example/a' }, { hosts: ['api.pcloud.com'], path: '/a?access_token=secret' }, { hosts: ['api.pcloud.com'], path: '/a?auth=secret' }]) assert.equal(client.avatarUrl(avatar), '');

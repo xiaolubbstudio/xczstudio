@@ -428,11 +428,16 @@
       preview.append(media);
     }
     const download = $('#detail-download');
-    download.href = safeUrl(asset.sourceUrl);
-    download.textContent = asset.demo ? '↓ 下载演示文件' : asset.cloud ? '↗ 预览 / 下载' : '↗ 在 pCloud 获取原文件';
+    download.href = asset.cloud ? window.PCloudClient.downloadUrl(catalog.config, asset) : safeUrl(asset.sourceUrl);
+    download.textContent = asset.demo ? '↓ 下载演示文件' : asset.cloud ? '↓ 下载 ZIP' : '↗ 在 pCloud 获取原文件';
+    if (asset.cloud || asset.demo) download.removeAttribute('target'); else download.target = '_blank';
+    const source = $('#detail-source');
+    source.hidden = !asset.cloud;
+    source.href = safeUrl(asset.sourceUrl);
+    download.onclick = asset.cloud ? () => toast('已发起 ZIP 下载') : null;
     if (asset.demo) download.setAttribute('download', asset.sourceUrl.split('/').pop());
     else download.removeAttribute('download');
-    $('#detail-note').textContent = asset.demo ? '这是项目附带的演示文件，不代表 pCloud 仓库已连接。' : asset.cloud ? '在 pCloud 文件夹选择同名文件。' : '';
+    $('#detail-note').textContent = asset.demo ? '这是项目附带的演示文件，不代表 pCloud 仓库已连接。' : asset.cloud ? 'ZIP 内为原文件，下载后解压。' : '';
     updateDetailFavorite();
     window.StudioMotion.open($('#detail-dialog'));
     $('#detail-dialog').scrollTop = 0;
