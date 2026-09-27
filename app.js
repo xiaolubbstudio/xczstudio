@@ -21,6 +21,12 @@
   let uploadRequest = null;
   let uploadQueue = [];
   let uploading = false;
+  let cloudFolderId = null;
+  let member = null;
+  let memberBusy = false;
+  let memberRequest = null;
+  const memberSession = () => window.PCloudAuth.get(catalog.config);
+  const memberSettings = () => ({ ...catalog.config, folderId: cloudFolderId });
   const isCloud = () => Boolean(catalog.config.folderUrl);
   const allAssets = () => isCloud() ? cloudAssets : catalog.assets;
 
@@ -32,6 +38,9 @@
   async function refreshCloud() {
     cloudRequest?.abort();
     cloudRequest = null;
+    memberRequest?.abort(); memberRequest = null;
+    member = null; memberBusy = false; cloudFolderId = null;
+    renderMember();
     if (!isCloud()) { cloudAssets = []; cloudBusy = false; cloudStatus('管理员连接一次文件夹后，上传的素材会自动显示在这里。'); render(); return; }
     const controller = new AbortController();
     cloudRequest = controller;
@@ -43,7 +52,9 @@
       const data = await window.PCloudClient.list(catalog.config, controller.signal);
       if (cloudRequest !== controller) return;
       cloudAssets = data.assets;
+      cloudFolderId = data.folderId;
       cloudStatus(`${data.name} · 已读取 ${data.assets.length} 份素材 · 上传后自动刷新`);
+      await refreshMember();
     } catch (error) {
       if (cloudRequest !== controller) return;
       cloudStatus(`目录未能更新：${controller.signal.aborted ? '连接超时，请重试。' : error.message}`, true);
@@ -52,6 +63,69 @@
       if (cloudRequest === controller) { cloudBusy = false; $('#refresh-button').disabled = false; render(); }
     }
   }
+
+  function renderMember(message = '') {
+    const signedIn = Boolean(memberSession());
+    $('#member-login-button').textContent = signedIn ? '我的 pCloud 账号' : '登录 pCloud';
+    $('#member-status').textContent = message || (memberBusy ? '正在核实账号的上传权限…' : member?.canUpload ? `已登录 · ${member.name} · 可以上传` : signedIn ? '已登录，尚未获得上传权限。请联系管理员邀请并接受文件夹共享。' : catalog.config.clientId ? '公开浏览 · 受邀成员登录 pCloud 后可上传' : '成员登录正在配置，网站上传暂时关闭。素材仍可浏览和下载。');
+    $('#member-info').textContent = member ? `${member.name} · ${member.canUpload ? '已获得上传权限' : '只能浏览，未获得上传权限'}` : signedIn ? '正在核实权限，或你的账号尚未接受素材文件夹邀请。' : '请使用受邀的 pCloud 账号登录。未受邀账号无法上传。';
+    $('#member-authorize').hidden = signedIn;
+    $('#member-authorize').disabled = !catalog.config.clientId;
+    $('#member-logout').hidden = !signedIn;
+    $('#member-recheck').hidden = !signedIn;
+    $('#member-recheck').disabled = memberBusy;
+    $('#member-login-message').textContent = catalog.config.clientId ? '' : '管理员正在配置 pCloud 应用。配置完成后此处即可登录。';
+    $('#upload-button').textContent = member?.canUpload ? '↑ 上传素材' : '登录后上传';
+  }
+
+  async function refreshMember() {
+    memberRequest?.abort();
+    const session = memberSession();
+    member = null;
+    if (!session || !cloudFolderId) { memberRequest = null; memberBusy = false; renderMember(); return; }
+    const controller = new AbortController();
+    memberRequest = controller;
+    memberBusy = true;
+    renderMember();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    try {
+      const input = memberSettings();
+      const [profile, access] = await Promise.all([window.PCloudClient.profile(input, session, controller.signal), window.PCloudClient.memberAccess(input, session, controller.signal)]);
+      if (memberRequest !== controller) return;
+      member = { ...profile, ...access };
+      memberBusy = false;
+      renderMember();
+    } catch (error) {
+      if (memberRequest !== controller) return;
+      if ([1000, 2000].includes(error.code)) window.PCloudAuth.logout();
+      memberBusy = false;
+      renderMember(controller.signal.aborted ? '账号权限核实超时，请重试。' : error.message);
+    } finally {
+      clearTimeout(timeout);
+      if (memberRequest === controller) { memberBusy = false; memberRequest = null; $('#member-recheck').disabled = false; }
+    }
+  }
+
+  function openMember() {
+    renderMember();
+    $('#member-dialog').showModal();
+  }
+
+  $('#member-login-button').addEventListener('click', openMember);
+  $('#member-authorize').addEventListener('click', () => {
+    try { window.PCloudAuth.begin(catalog.config); }
+    catch (error) { $('#member-login-message').textContent = error.message; }
+  });
+  $('#member-recheck').addEventListener('click', refreshMember);
+  $('#member-logout').addEventListener('click', () => {
+    uploadRequest?.abort();
+    memberRequest?.abort(); memberRequest = null;
+    window.PCloudAuth.logout();
+    member = null; memberBusy = false;
+    renderMember();
+    $('#member-dialog').close();
+    toast('已退出 pCloud 登录');
+  });
 
   function renderQueue() {
     $('#upload-queue').replaceChildren(...uploadQueue.map((item) => {
@@ -66,13 +140,9 @@
   }
 
   function openUpload() {
-    try {
-      const settings = window.PCloudClient.config(catalog.config);
-      if (!settings.folder || !settings.upload) { openSettings('管理员只需设置一次：同一素材文件夹的分享链接和请求文件链接。之后成员直接在网站选文件上传。'); return; }
-    } catch (error) { openSettings(error.message); return; }
+    if (!memberSession() || !member?.canUpload || memberBusy) { openMember(); return; }
     $('#upload-message').textContent = '文件会直接上传到 pCloud，完成后自动更新目录。';
-    try { $('#upload-member').value = localStorage.getItem('orange-library-upload-member') || '雷霆工作室'; }
-    catch { $('#upload-member').value = '雷霆工作室'; }
+    $('#upload-member').value = member.name;
     renderQueue();
     $('#upload-dialog').showModal();
   }
@@ -90,12 +160,11 @@
   });
   $('#upload-start').addEventListener('click', async () => {
     if (uploading) return;
-    const sender = $('#upload-member').value.trim();
-    if (!sender || sender.length > 30 || /[/\\\u0000-\u001f]/.test(sender)) { $('#upload-message').textContent = '请填写有效的成员名称（最多 30 字，不含斜线）。'; return; }
-    try { localStorage.setItem('orange-library-upload-member', sender); } catch { /* 上传无需本地存储 */ }
+    const session = memberSession();
+    if (!session || !member?.canUpload) { $('#upload-message').textContent = '登录或权限已失效，请重新登录并核实上传权限。'; return; }
     uploading = true;
     uploadRequest = new AbortController();
-    const settings = { ...catalog.config };
+    const settings = memberSettings();
     const previousCount = cloudAssets.length;
     let completed = 0;
     renderQueue();
@@ -103,9 +172,9 @@
       if (item.done || uploadRequest.signal.aborted) continue;
       try {
         item.status = '正在上传…'; renderQueue();
-        await window.PCloudClient.upload(settings, item.file, (percent) => { item.status = `${percent}% · 正在上传`; renderQueue(); }, uploadRequest.signal, sender);
+        await window.PCloudClient.upload(settings, item.file, (percent) => { item.status = `${percent}% · 正在上传`; renderQueue(); }, uploadRequest.signal, session);
         item.done = true; item.status = '上传成功'; completed++;
-      } catch (error) { item.status = error.message; }
+      } catch (error) { item.status = error.message; if ([1000, 2000].includes(error.code)) window.PCloudAuth.logout(); }
       renderQueue();
     }
     const canceled = uploadRequest.signal.aborted;
@@ -113,7 +182,7 @@
     uploadRequest = null;
     renderQueue();
     await refreshCloud();
-    $('#upload-message').textContent = canceled ? '已停止上传。请刷新目录检查已完成的文件。' : !completed ? '本次没有文件上传成功，请查看上方错误。' : `本次 ${completed} 个文件上传成功。${cloudAssets.length <= previousCount ? '目录暂未出现新文件，请检查两个链接是否属于同一文件夹；不要重复上传。' : '目录已刷新，无需登记或复制分享链接。'}`;
+    $('#upload-message').textContent = canceled ? '已停止上传。请刷新目录检查已完成的文件。' : !completed ? '本次没有文件上传成功，请查看上方错误。' : `本次 ${completed} 个文件上传成功。${cloudAssets.length <= previousCount ? '目录暂未出现新文件，请稍后刷新；不要重复上传。' : '目录已刷新，无需登记或复制分享链接。'}`;
   });
   $('#upload-cancel').addEventListener('click', () => uploadRequest?.abort());
   $('#upload-dialog').addEventListener('cancel', (event) => { if (uploading) { event.preventDefault(); $('#upload-message').textContent = '请先点击“停止上传”，再关闭窗口。'; } });
@@ -170,12 +239,11 @@
 
   function validateCatalog(input) {
     if (!input || input.version !== 1 || !Array.isArray(input.assets) || input.assets.length > 5000) throw new Error('请选择 version 为 1 的目录 JSON，素材数量不能超过 5000。');
-    const uploadUrl = String(input.config?.uploadUrl || '').trim();
-    if (uploadUrl && !pcloudUrl(uploadUrl)) throw new Error('上传入口必须是 pCloud 官方 HTTPS 地址。');
+    const clientId = String(input.config?.clientId || '').trim();
     const folderUrl = String(input.config?.folderUrl || '').trim();
     const region = input.config?.region || 'us';
     if (!['us', 'eu'].includes(region)) throw new Error('请选择美国或欧洲数据地区。');
-    if (folderUrl) window.PCloudClient.config({ uploadUrl, folderUrl, region });
+    window.PCloudClient.config({ clientId, folderUrl, region });
     const ids = new Set();
     const assets = input.assets.map((asset) => {
       if (!asset || typeof asset.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(asset.id) || ids.has(asset.id)) throw new Error('素材 ID 无效或重复。');
@@ -193,7 +261,7 @@
       if (sizeMB !== null && (typeof sizeMB !== 'number' || !Number.isFinite(sizeMB) || sizeMB <= 0 || sizeMB > 10240)) throw new Error('文件大小必须为 0–10240MB 之间的正数，或留空。');
       return { id: asset.id, name: asset.name.trim(), type: asset.type, tags: [...asset.tags], description: asset.description, member: asset.member, date: asset.date, sizeMB, previewUrl, sourceUrl, demo: asset.demo === true };
     });
-    return { version: 1, config: { uploadUrl, folderUrl, region }, assets };
+    return { version: 1, config: { clientId, folderUrl, region }, assets };
   }
 
   function saveCatalog(nextCatalog) {
@@ -360,7 +428,7 @@
 
   function openSettings(message = '') {
     clearConfirmation();
-    $('#upload-url').value = catalog.config.uploadUrl;
+    $('#pcloud-client-id').value = catalog.config.clientId;
     $('#folder-url').value = catalog.config.folderUrl;
     $('#cloud-region').value = catalog.config.region;
     $('#settings-error').textContent = '';
@@ -425,9 +493,9 @@
   $('#settings-form').addEventListener('submit', (event) => {
     event.preventDefault();
     try {
-      const next = { uploadUrl: $('#upload-url').value.trim(), folderUrl: $('#folder-url').value.trim(), region: $('#cloud-region').value };
+      const next = { clientId: $('#pcloud-client-id').value.trim(), folderUrl: $('#folder-url').value.trim(), region: $('#cloud-region').value };
       window.PCloudClient.config(next);
-      if (next.uploadUrl && !next.folderUrl) throw new Error('请同时填写这个文件夹的分享链接，以便自动读取目录。');
+      if (next.clientId && !next.folderUrl) throw new Error('请同时填写素材文件夹分享链接。');
       cloudAssets = [];
       saveCatalog({ ...catalog, config: next });
       refreshCloud();
@@ -459,7 +527,7 @@
       const data = validateCatalog(JSON.parse(await file.text()));
       confirmChange(`导入 ${data.assets.length} 份素材将替换当前目录草稿。请先导出备份。`, () => {
         saveCatalog(data);
-        $('#upload-url').value = catalog.config.uploadUrl;
+        $('#pcloud-client-id').value = catalog.config.clientId;
         $('#folder-url').value = catalog.config.folderUrl;
         $('#cloud-region').value = catalog.config.region;
         cloudAssets = []; refreshCloud();
@@ -475,7 +543,7 @@
     catch { $('#settings-error').textContent = '浏览器无法清除草稿，请检查本地存储设置。'; return; }
     catalog = validateCatalog(published);
     draft = false;
-    $('#upload-url').value = catalog.config.uploadUrl;
+    $('#pcloud-client-id').value = catalog.config.clientId;
     $('#folder-url').value = catalog.config.folderUrl;
     $('#cloud-region').value = catalog.config.region;
     $('#settings-message').textContent = '已恢复网站发布的目录，个人收藏保留。';

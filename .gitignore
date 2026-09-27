@@ -8,6 +8,9 @@
 !/styles.css
 !/app.js
 !/pcloud-client.js
+!/pcloud-auth.js
+!/auth.html
+!/auth-callback.js
 !/data/
 /data/*
 !/data/catalog.js
@@ -23,6 +26,7 @@
 !/scripts/serve.cjs
 !/scripts/start-preview.ps1
 !/scripts/pcloud-client.test.cjs
+!/scripts/pcloud-auth.test.cjs
 !/scripts/smoke-test.cjs
 !/docs/
 /docs/*

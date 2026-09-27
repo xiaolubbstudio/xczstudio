@@ -7,3 +7,5 @@
 @media(hover:none),(pointer:coarse){.button:hover,.asset-card:hover{transform:none}.button{min-height:44px}.tabs button{min-height:44px}.favorite-button{min-width:44px;min-height:44px}}
 @media(max-width:760px){.mobile-settings-button{display:block}.section-heading input{font-size:16px}.form-dialog input:not([type=file]),.form-dialog textarea,.form-dialog select{font-size:16px}}
 @media(prefers-reduced-motion:reduce){.button:hover,.button:active,.asset-card:hover{transform:none!important}}
+
+.member-status{font-size:12px;line-height:1.8;color:#66756e;margin:16px 0;overflow-wrap:anywhere}.account-button{font-size:12px;padding:9px 12px}.auth-page{display:grid;place-items:center;min-height:100vh;padding:24px}.auth-card{margin:0;max-width:520px;padding:32px;background:white;border-radius:20px}.auth-card h1{font-size:24px}.auth-card p{line-height:1.8;margin-bottom:24px}.form-dialog input[readonly]{background:#f5f6f8;color:#657180}@media(max-width:760px){.topbar-right{gap:8px}.account-button{padding:8px;font-size:11px}.topbar-right>.avatar{display:none}}

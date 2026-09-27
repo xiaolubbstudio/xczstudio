@@ -1,16 +1,18 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const client = require('../pcloud-client.js');
-const settings = { folderUrl: 'https://u.pcloud.link/publink/show?code=folderCode', uploadUrl: 'https://my.pcloud.com/#page=puplink&code=uploadCode', region: 'us' };
+const settings = { folderUrl: 'https://u.pcloud.link/publink/show?code=folderCode', clientId: 'studio-app', folderId: 456, region: 'us' };
+const session = () => ({ token: 'test-token', uid: 123, clientId: settings.clientId, region: 'us', created: Date.now() });
 
 test('仅接受官方完整链接，并区分目录和上传用途', () => {
-  assert.equal(client.config(settings).upload.code, 'uploadCode');
+  assert.equal(client.config(settings).clientId, 'studio-app');
+  assert.equal(client.config({ ...settings, uploadUrl: 'https://my.pcloud.com/#page=puplink&code=oldCode' }).upload, undefined);
   assert.equal(client.parseLink('https://u.pcloud.com/#/puplink?code=uploadCode', 'upload').code, 'uploadCode');
   assert.equal(client.config({ ...settings, region: 'eu' }).base, 'https://eapi.pcloud.com');
   for (const url of ['https://pcloud.com.evil.example/?code=x', 'http://my.pcloud.com/?code=x', 'https://my.pcloud.com/?code=x&access_token=secret', 'https://user:password@my.pcloud.com/?code=x', 'https://u.pcloud.link/short']) {
     assert.throws(() => client.parseLink(url, 'folder'));
   }
-  assert.throws(() => client.parseLink(settings.uploadUrl, 'folder'));
+  assert.throws(() => client.parseLink('https://my.pcloud.com/#page=puplink&code=x', 'folder'));
   assert.throws(() => client.parseLink('https://my.pcloud.com/#page=publink&code=x', 'upload'));
 });
 
@@ -46,15 +48,17 @@ test('目录请求使用正确地区，不携带账号凭据；解析 API 返回
     assert.equal(options.credentials, 'omit');
     return { ok: true, json: async () => ({ result: 0, metadata: { isfolder: true, name: '共享', contents: [] } }) };
   };
-  try { assert.deepEqual(await client.list({ ...settings, region: 'eu' }), { name: '共享', assets: [] }); }
+  try { assert.deepEqual(await client.list({ ...settings, region: 'eu' }), { name: '共享', folderId: undefined, assets: [] }); }
   finally { global.fetch = originalFetch; }
 });
 
-test('参数在 URL，multipart 保留中文文件名；进度不会提前成功，取消和网络失败正确处理', async () => {
+test('成员上传使用本人令牌与固定文件夹；进度、额度、取消和网络失败正确处理', async () => {
   const originalXHR = global.XMLHttpRequest;
   const originalForm = global.FormData;
+  const originalFetch = global.fetch;
   let mode = 'success';
   let sent = 0;
+  let notifySent;
   class FormMock { constructor() { this.entries = []; } append(...entry) { this.entries.push(entry); } }
   class XHRMock {
     constructor() { this.upload = {}; }
@@ -62,44 +66,71 @@ test('参数在 URL，multipart 保留中文文件名；进度不会提前成功
       assert.equal(method, 'POST');
       const parsed = new URL(url);
       assert.equal(parsed.origin, 'https://api.pcloud.com');
-      assert.equal(parsed.pathname, '/uploadtolink');
-      assert.equal(parsed.searchParams.get('code'), 'uploadCode');
-      assert.equal(parsed.searchParams.get('names'), '雷霆工作室');
-      assert.equal(parsed.searchParams.get('filescount'), '1');
-      assert.equal(parsed.searchParams.get('nopartial'), '1');
+      assert.equal(parsed.pathname, '/uploadfile');
+      assert.equal(parsed.search, '');
     }
     abort() { this.onabort(); }
-    setRequestHeader(name, value) { assert.equal(name, 'Content-Type'); assert.equal(value, 'text/plain'); }
     send(body) {
       sent++;
-      assert.equal(body.entries[0][0], 'file');
-      assert.equal(body.entries[0][1].size, 300 * 1048576);
-      assert.equal(body.entries[0][2], '中文素材.mov');
+      notifySent?.();
+      assert.deepEqual(body.entries.slice(0, 4), [['access_token', 'test-token'], ['folderid', '456'], ['nopartial', '1'], ['renameifexists', '1']]);
+      assert.equal(body.entries[4][0], 'file');
+      assert.equal(body.entries[4][1].size, 300 * 1048576);
+      assert.equal(body.entries[4][2], '中文素材.mov');
       if (mode === 'hold') return;
       queueMicrotask(() => {
         if (mode === 'network') { this.onerror(); return; }
         this.upload.onprogress({ lengthComputable: true, loaded: 100, total: 100 });
         this.status = 200;
-        this.response = { result: mode === 'quota' ? 7007 : 0 };
+        this.response = { result: mode === 'quota' ? 2008 : 0 };
         this.onload();
       });
     }
   }
   global.FormData = FormMock;
   global.XMLHttpRequest = XHRMock;
+  global.fetch = async (url, options) => {
+    assert.equal(url, 'https://api.pcloud.com/listfolder');
+    assert.equal(options.method, 'POST');
+    assert.equal(options.body.get('access_token'), 'test-token');
+    return { ok: true, json: async () => ({ result: 0, metadata: { isfolder: true, folderid: 456, ismine: false, cancreate: true } }) };
+  };
   const file = { name: '中文素材.mov', size: 300 * 1048576 };
   try {
     let progress;
-    await client.upload(settings, file, p => { progress = p; });
+    await client.upload(settings, file, p => { progress = p; }, null, session());
     assert.equal(progress, 99);
-    mode = 'quota'; await assert.rejects(client.upload(settings, file), /空间/);
-    mode = 'network'; await assert.rejects(client.upload(settings, file), /确认是否已上传/);
+    mode = 'quota'; await assert.rejects(client.upload(settings, file, null, null, session()), /空间/);
+    mode = 'network'; await assert.rejects(client.upload(settings, file, null, null, session()), /确认是否已上传/);
     mode = 'hold'; const abort = new AbortController();
-    const pending = client.upload(settings, file, null, abort.signal); abort.abort();
+    const started = new Promise(resolve => { notifySent = resolve; });
+    const pending = client.upload(settings, file, null, abort.signal, session());
+    await started;
+    abort.abort();
     await assert.rejects(pending, /取消/);
     const before = sent;
-    await assert.rejects(client.upload(settings, file, null, abort.signal), /取消/);
+    await assert.rejects(client.upload(settings, file, null, abort.signal, session()), /取消/);
     assert.equal(sent, before);
-    assert.throws(() => client.upload(settings, { name: 'empty', size: 0 }), /空文件/);
-  } finally { global.XMLHttpRequest = originalXHR; global.FormData = originalForm; }
+    await assert.rejects(client.upload(settings, { name: 'empty', size: 0 }, null, null, session()), /空文件/);
+  } finally { global.XMLHttpRequest = originalXHR; global.FormData = originalForm; global.fetch = originalFetch; }
+});
+
+test('匿名、过期会话、只读成员与被撤销邀请的成员不能发送文件', async () => {
+  const originalFetch = global.fetch;
+  const originalXHR = global.XMLHttpRequest;
+  let calls = 0;
+  let response = { result: 0, metadata: { isfolder: true, folderid: 456, ismine: false, cancreate: false } };
+  global.XMLHttpRequest = class { constructor() { throw new Error('不应发送上传请求'); } };
+  global.fetch = async () => { calls++; return { ok: true, json: async () => response }; };
+  const file = { name: 'test.wav', size: 48 };
+  try {
+    await assert.rejects(client.upload(settings, file), /登录/);
+    await assert.rejects(client.upload(settings, file, null, null, { ...session(), created: Date.now() - 9 * 3600000 }), /登录/);
+    assert.equal(calls, 0);
+    await assert.rejects(client.upload(settings, file, null, null, session()), /浏览权限/);
+    response = { result: 2003 };
+    await assert.rejects(client.upload(settings, file, null, null, session()), /权限/);
+    response = { result: 0, metadata: { isfolder: true, folderid: 999, ismine: true } };
+    await assert.rejects(client.upload(settings, file, null, null, session()), /不匹配/);
+  } finally { global.fetch = originalFetch; global.XMLHttpRequest = originalXHR; }
 });

@@ -1,8 +1,8 @@
-// 仅使用 pCloud 公开分享及上传接口；不接收账号密码或 token。
+// 目录公开读取；上传必须使用当前成员的 OAuth 会话，由 pCloud 校验文件夹权限。
 (function (root) {
   'use strict';
   const HOSTS = { us: 'https://api.pcloud.com', eu: 'https://eapi.pcloud.com' };
-  const ERRORS = { 2001: 'pCloud 未接受文件名，请检查文件名后重试。', 2003: '没有访问权限。', 2008: 'pCloud 空间不足。', 7001: '链接无效，请检查链接和数据地区。', 7002: '链接已被删除。', 7004: '链接已过期。', 7005: '分享链接流量已用完。', 7006: '分享链接下载次数已用完。', 7007: '上传链接空间额度已用完。', 7008: '上传链接文件数量额度已用完。' };
+  const ERRORS = { 1000: '请先登录 pCloud 账号。', 2000: '登录已失效，请重新登录。', 2001: 'pCloud 未接受文件名，请检查文件名后重试。', 2003: '你的账号没有这个素材文件夹的访问或上传权限。请联系管理员邀请。', 2005: '未找到素材文件夹，请确认已接受邀请。', 2008: 'pCloud 空间不足。', 7001: '链接无效，请检查链接和数据地区。', 7002: '链接已被删除。', 7004: '链接已过期。', 7005: '分享链接流量已用完。', 7006: '分享链接下载次数已用完。', 7007: '上传链接空间额度已用完。', 7008: '上传链接文件数量额度已用完。' };
 
   function parseLink(value, kind) {
     let url;
@@ -23,13 +23,18 @@
     const region = input.region || 'us';
     if (!HOSTS[region]) throw new Error('请选择美国或欧洲数据地区。');
     const folder = input.folderUrl ? parseLink(input.folderUrl, 'folder') : null;
-    const upload = input.uploadUrl ? parseLink(input.uploadUrl, 'upload') : null;
-    return { region, folder, upload, base: HOSTS[region] };
+    const clientId = String(input.clientId || '').trim();
+    if (clientId && !/^[a-zA-Z0-9_-]{1,200}$/.test(clientId)) throw new Error('pCloud Client ID 无效，请勿填写 Client Secret 或 token。');
+    return { region, folder, clientId, base: HOSTS[region] };
   }
 
   function result(data) {
     if (!data || !Number.isInteger(data.result)) throw new Error('pCloud 返回了无法识别的响应。');
-    if (data.result !== 0) throw new Error(ERRORS[data.result] || `pCloud 请求失败（${data.result}）。`);
+    if (data.result !== 0) {
+      const error = new Error(ERRORS[data.result] || `pCloud 请求失败（${data.result}）。`);
+      error.code = data.result;
+      throw error;
+    }
     return data;
   }
 
@@ -71,19 +76,48 @@
     const settings = config(input);
     if (!settings.folder) throw new Error('请先设置文件夹分享链接。');
     const data = await request(settings, 'showpublink', { code: settings.folder.code }, signal);
-    return { name: data.metadata?.name || '素材库', assets: assetsFor(data.metadata, settings) };
+    return { name: data.metadata?.name || '素材库', folderId: data.metadata?.folderid, assets: assetsFor(data.metadata, settings) };
   }
 
-  function upload(input, file, onProgress, signal, sender = '雷霆工作室') {
+  function requireSession(input, session) {
+    const auth = root.PCloudAuth || (typeof require === 'function' ? require('./pcloud-auth.js') : null);
+    if (!auth?.validSession(session, input)) throw new Error('请先登录有效的 pCloud 账号，再上传素材。');
+  }
+
+  async function authenticated(input, session, method, params, signal) {
     const settings = config(input);
-    if (!settings.upload || !settings.folder) throw new Error('先设置同一文件夹的分享链接和上传链接。');
+    requireSession(settings, session);
+    const body = new URLSearchParams({ access_token: session.token, ...params });
+    const response = await root.fetch(`${settings.base}/${method}`, { method: 'POST', body, signal, credentials: 'omit', cache: 'no-store' });
+    if (!response.ok) throw new Error(`pCloud 连接失败（HTTP ${response.status}）。`);
+    return result(await response.json());
+  }
+
+  async function memberAccess(input, session, signal) {
+    if (!Number.isSafeInteger(input.folderId) || input.folderId <= 0) throw new Error('素材文件夹尚未读取成功，请刷新后重试。');
+    const data = await authenticated(input, session, 'listfolder', { folderid: String(input.folderId), nofiles: '1' }, signal);
+    const folder = data.metadata;
+    if (!folder?.isfolder || folder.folderid !== input.folderId) throw new Error('pCloud 返回的素材文件夹不匹配。');
+    return { canUpload: folder.ismine === true || folder.cancreate === true, owner: folder.ismine === true };
+  }
+
+  async function profile(input, session, signal) {
+    const data = await authenticated(input, session, 'userinfo', {}, signal);
+    if (data.userid !== session.uid) throw new Error('登录身份不匹配，请重新登录。');
+    return { uid: data.userid, name: typeof data.email === 'string' ? data.email : `pCloud 成员 ${data.userid}` };
+  }
+
+  async function upload(input, file, onProgress, signal, session) {
+    const settings = config(input);
+    requireSession(settings, session);
+    if (!settings.folder) throw new Error('管理员尚未配置素材文件夹。');
     if (!file || file.size <= 0) throw new Error('不能上传空文件。');
-    if (!sender.trim() || sender.length > 30 || /[/\\\u0000-\u001f]/.test(sender)) throw new Error('成员名称不能留空、超过 30 字或包含斜线。');
+    if (signal?.aborted) throw new Error('上传已取消。');
+    const access = await memberAccess(input, session, signal);
+    if (!access.canUpload) throw new Error('你只有浏览权限，不能上传。请联系管理员调整共享权限。');
     return new Promise((resolve, reject) => {
       const xhr = new root.XMLHttpRequest();
-      const url = new URL(`${settings.base}/uploadtolink`);
-      url.search = new URLSearchParams({ code: settings.upload.code, names: sender.trim(), filescount: '1', nopartial: '1' });
-      xhr.open('POST', url.href);
+      xhr.open('POST', `${settings.base}/uploadfile`);
       xhr.responseType = 'json';
       xhr.timeout = 30 * 60 * 1000;
       xhr.withCredentials = false;
@@ -99,9 +133,13 @@
       xhr.onerror = () => finish(reject, new Error('网络连接中断。先刷新目录确认是否已上传，再重试，避免重复文件。'));
       xhr.ontimeout = () => finish(reject, new Error('上传超时。先刷新目录确认是否已上传，再重试。'));
       xhr.onabort = () => finish(reject, new Error('上传已取消。'));
-      // 与官方上传页面一致：参数在 URL，multipart 只放文件。
-      // 由浏览器设置 boundary，不设置额外请求头。
+      // 成员令牌放在 POST 正文，避免出现在 URL、历史或分享地址中。
+      // renameifexists 避免覆盖已有素材；参数先于文件，符合 uploadfile 协议。
       const form = new root.FormData();
+      form.append('access_token', session.token);
+      form.append('folderid', String(input.folderId));
+      form.append('nopartial', '1');
+      form.append('renameifexists', '1');
       form.append('file', file, file.name);
       if (signal?.aborted) { finish(reject, new Error('上传已取消。')); return; }
       signal?.addEventListener('abort', stop, { once: true });
@@ -109,7 +147,7 @@
     });
   }
 
-  const api = { parseLink, config, result, typeFor, assetsFor, list, upload };
+  const api = { parseLink, config, result, typeFor, assetsFor, list, memberAccess, profile, upload };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PCloudClient = api;
 })(typeof window === 'undefined' ? globalThis : window);
