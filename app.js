@@ -415,7 +415,7 @@
     $('#detail-meta').replaceChildren(element('span', '', `上传成员：${asset.member || '未署名'}`), element('span', '', `添加日期：${asset.date}`), element('span', '', fileSize(asset)));
     const preview = $('#detail-preview');
     preview.replaceChildren();
-    const url = safeUrl(asset.previewUrl);
+    const url = safeUrl(asset.detailPreviewUrl || asset.previewUrl);
     if (!url) preview.append(fallback(asset.type, '在 pCloud 预览'));
     else {
       const audio = !asset.cloud && asset.type === 'audio';
@@ -435,6 +435,7 @@
     $('#detail-note').textContent = asset.demo ? '这是项目附带的演示文件，不代表 pCloud 仓库已连接。' : asset.cloud ? '在 pCloud 文件夹选择同名文件。' : '';
     updateDetailFavorite();
     window.StudioMotion.open($('#detail-dialog'));
+    $('#detail-dialog').scrollTop = 0;
   }
 
   function openSettings(message = '') {

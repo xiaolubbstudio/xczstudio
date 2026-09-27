@@ -43,6 +43,9 @@ test('递归读取子文件夹，保留文件信息和分类；拒绝单文件�
   assert.deepEqual(assets[0].tags, ['表情']);
   assert.equal(assets[1].sizeMB, 300);
   assert.equal(new URL(assets[0].previewUrl).pathname, '/getpubthumb');
+  assert.equal(new URL(assets[0].previewUrl).searchParams.has('crop'), false);
+  assert.equal(new URL(assets[0].detailPreviewUrl).searchParams.has('crop'), false);
+  assert.equal(new URL(assets[0].detailPreviewUrl).searchParams.get('size'), '1024x1024');
   assert.equal(assets[0].sourceUrl, settings.folderUrl);
   assert.throws(() => client.assetsFor({ isfolder: false }, client.config(settings)));
 });
