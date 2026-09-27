@@ -34,7 +34,7 @@
 
 将 index.html、styles.css、app.js、pcloud-client.js、assets/、data/ 和 .nojekyll 上传到公开仓库。在仓库 Settings → Pages 中选择 Deploy from a branch，选择 main 和 /(root)，保存。仓库名称可自定，代码全部使用相对路径，支持项目子路径。
 
-不需要安装依赖、构建或收费 runner。仓库为 https://github.com/xiaolubbstudio/xczstudio 。完成登录授权后推送，并在 Pages 中开启 main 分支根目录发布；首次上线状态以实际部署结果为准。原始技能包、skills 和预览截图不会同步到仓库。
+不需要安装依赖、构建或收费 runner。仓库为 https://github.com/xiaolubbstudio/xczstudio ，网站已发布到 https://xiaolubbstudio.github.io/xczstudio/ 。Pages 使用 main 分支根目录，后续推送会自动部署。原始技能包、skills 和预览截图不会同步到仓库。
 
 用户已要求后续每次修改网站都同步到该仓库。执行约定记录在 AGENTS.md，发布和更新步骤见 docs/发布与同步.md。
 
