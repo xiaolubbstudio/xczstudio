@@ -4,6 +4,20 @@ const client = require('../pcloud-client.js');
 const settings = { folderUrl: 'https://u.pcloud.link/publink/show?code=folderCode', clientId: 'studio-app', folderId: 456, region: 'us' };
 const session = () => ({ token: 'test-token', uid: 123, clientId: settings.clientId, region: 'us', created: Date.now() });
 
+test('头像只接收 pCloud 返回的官方地址，令牌不进入图片 URL；缺失头像不阻断身份验证', async () => {
+  assert.equal(client.avatarUrl({ hosts: ['c1.pcloud.com'], path: '/avatar.png' }), 'https://c1.pcloud.com/avatar.png');
+  for (const avatar of [null, { isdefault: true }, { hosts: ['pcloud.com.evil.example'], path: '/a' }, { hosts: ['api.pcloud.com'], path: '//evil.example/a' }, { hosts: ['api.pcloud.com'], path: '/a?access_token=secret' }, { hosts: ['api.pcloud.com'], path: '/a?auth=secret' }]) assert.equal(client.avatarUrl(avatar), '');
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options) => {
+    assert.equal(url, 'https://api.pcloud.com/userinfo');
+    assert.equal(options.method, 'POST');
+    assert.equal(options.body.get('access_token'), 'test-token');
+    return { ok: true, json: async () => ({ result: 0, userid: 123, email: 'member@example.com' }) };
+  };
+  try { assert.deepEqual(await client.profile(settings, session()), { uid: 123, name: 'member@example.com', avatarUrl: '' }); }
+  finally { global.fetch = originalFetch; }
+});
+
 test('仅接受官方完整链接，并区分目录和上传用途', () => {
   assert.equal(client.config(settings).clientId, 'studio-app');
   assert.equal(client.config({ ...settings, uploadUrl: 'https://my.pcloud.com/#page=puplink&code=oldCode' }).upload, undefined);

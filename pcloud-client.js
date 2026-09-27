@@ -104,7 +104,20 @@
   async function profile(input, session, signal) {
     const data = await authenticated(input, session, 'userinfo', {}, signal);
     if (data.userid !== session.uid) throw new Error('登录身份不匹配，请重新登录。');
-    return { uid: data.userid, name: typeof data.email === 'string' ? data.email : `pCloud 成员 ${data.userid}` };
+    return { uid: data.userid, name: typeof data.email === 'string' ? data.email : `pCloud 成员 ${data.userid}`, avatarUrl: avatarUrl(data.avatar) };
+  }
+
+  // pCloud's web client uses hosts + path for avatars. Some account types do
+  // not expose an avatar through userinfo; absence must not prevent login.
+  function avatarUrl(avatar) {
+    if (!avatar || avatar.isdefault || !Array.isArray(avatar.hosts) || typeof avatar.path !== 'string') return '';
+    const host = avatar.hosts.find(value => typeof value === 'string' && /^(?:[a-z0-9-]+\.)*(?:pcloud\.com|pcloud\.link)$/i.test(value));
+    if (!host || !avatar.path.startsWith('/') || avatar.path.startsWith('//')) return '';
+    try {
+      const url = new URL(`https://${host}${avatar.path}`);
+      if (url.hostname !== host.toLowerCase() || /access_token|password|(?:[?&#])auth=/i.test(url.href)) return '';
+      return url.href;
+    } catch { return ''; }
   }
 
   async function upload(input, file, onProgress, signal, session) {
@@ -147,7 +160,7 @@
     });
   }
 
-  const api = { parseLink, config, result, typeFor, assetsFor, list, memberAccess, profile, upload };
+  const api = { parseLink, config, result, typeFor, assetsFor, list, memberAccess, profile, avatarUrl, upload };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PCloudClient = api;
 })(typeof window === 'undefined' ? globalThis : window);

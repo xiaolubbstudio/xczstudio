@@ -32,3 +32,7 @@
 /docs/*
 !/docs/最小版验收.md
 !/docs/发布与同步.md
+
+!/motion.js
+!/motion.css
+!/assets/studio-face.png

@@ -12,7 +12,6 @@
   let favorites = new Set();
   let activeType = 'all';
   let activeAsset = null;
-  let toastTimer;
   let storageWarning = '';
   let pendingChange = null;
   let cloudAssets = [];
@@ -35,13 +34,13 @@
     $('#cloud-status').classList.toggle('error', error);
   }
 
-  async function refreshCloud() {
+  async function refreshCloud(notify = false) {
     cloudRequest?.abort();
     cloudRequest = null;
     memberRequest?.abort(); memberRequest = null;
     member = null; memberBusy = false; cloudFolderId = null;
     renderMember();
-    if (!isCloud()) { cloudAssets = []; cloudBusy = false; cloudStatus('管理员连接一次文件夹后，上传的素材会自动显示在这里。'); render(); return; }
+    if (!isCloud()) { cloudAssets = []; cloudBusy = false; cloudStatus('尚未连接 pCloud'); render(); return; }
     const controller = new AbortController();
     cloudRequest = controller;
     cloudBusy = true;
@@ -53,11 +52,13 @@
       if (cloudRequest !== controller) return;
       cloudAssets = data.assets;
       cloudFolderId = data.folderId;
-      cloudStatus(`${data.name} · 已读取 ${data.assets.length} 份素材 · 上传后自动刷新`);
+      cloudStatus(`${data.name} · ${data.assets.length} 份素材`);
+      if (notify) toast('素材已更新');
       await refreshMember();
     } catch (error) {
       if (cloudRequest !== controller) return;
       cloudStatus(`目录未能更新：${controller.signal.aborted ? '连接超时，请重试。' : error.message}`, true);
+      if (notify) toast('刷新失败，请重试');
     } finally {
       clearTimeout(timeout);
       if (cloudRequest === controller) { cloudBusy = false; $('#refresh-button').disabled = false; render(); }
@@ -66,8 +67,15 @@
 
   function renderMember(message = '') {
     const signedIn = Boolean(memberSession());
+    const image = $('#member-avatar-image');
+    const avatar = signedIn && member?.avatarUrl;
+    image.hidden = !avatar;
+    $('#member-avatar svg').toggleAttribute('hidden', Boolean(avatar));
+    if (avatar) { if (image.getAttribute('src') !== avatar) image.src = avatar; }
+    else image.removeAttribute('src');
+    $('#member-avatar').setAttribute('aria-label', member ? `${member.name} · pCloud 账号` : '我的 pCloud 账号');
     $('#member-login-button').textContent = signedIn ? '我的 pCloud 账号' : '登录 pCloud';
-    $('#member-status').textContent = message || (memberBusy ? '正在核实账号的上传权限…' : member?.canUpload ? `已登录 · ${member.name} · 可以上传` : signedIn ? '已登录，尚未获得上传权限。请联系管理员邀请并接受文件夹共享。' : catalog.config.clientId ? '公开浏览 · 受邀成员登录 pCloud 后可上传' : '成员登录正在配置，网站上传暂时关闭。素材仍可浏览和下载。');
+    $('#member-status').textContent = message || (memberBusy ? '正在核实账号的上传权限…' : member?.canUpload ? `已登录 · ${member.name} · 可以上传` : signedIn ? '已登录，尚未获得上传权限。请联系管理员邀请并接受文件夹共享。' : catalog.config.clientId ? '受邀成员登录后可上传' : '登录配置中 · 暂停上传');
     $('#member-info').textContent = member ? `${member.name} · ${member.canUpload ? '已获得上传权限' : '只能浏览，未获得上传权限'}` : signedIn ? '正在核实权限，或你的账号尚未接受素材文件夹邀请。' : '请使用受邀的 pCloud 账号登录。未受邀账号无法上传。';
     $('#member-authorize').hidden = signedIn;
     $('#member-authorize').disabled = !catalog.config.clientId;
@@ -108,10 +116,15 @@
 
   function openMember() {
     renderMember();
-    $('#member-dialog').showModal();
+    window.StudioMotion.open($('#member-dialog'));
   }
 
   $('#member-login-button').addEventListener('click', openMember);
+  $('#member-avatar').addEventListener('click', openMember);
+  $('#member-avatar-image').addEventListener('error', () => {
+    $('#member-avatar-image').hidden = true;
+    $('#member-avatar svg').removeAttribute('hidden');
+  });
   $('#member-authorize').addEventListener('click', () => {
     try { window.PCloudAuth.begin(catalog.config); }
     catch (error) { $('#member-login-message').textContent = error.message; }
@@ -123,7 +136,7 @@
     window.PCloudAuth.logout();
     member = null; memberBusy = false;
     renderMember();
-    $('#member-dialog').close();
+    window.StudioMotion.close($('#member-dialog'));
     toast('已退出 pCloud 登录');
   });
 
@@ -141,10 +154,10 @@
 
   function openUpload() {
     if (!memberSession() || !member?.canUpload || memberBusy) { openMember(); return; }
-    $('#upload-message').textContent = '文件会直接上传到 pCloud，完成后自动更新目录。';
+    $('#upload-message').textContent = '请选择文件。';
     $('#upload-member').value = member.name;
     renderQueue();
-    $('#upload-dialog').showModal();
+    window.StudioMotion.open($('#upload-dialog'));
   }
 
   $('#upload-files').addEventListener('change', (event) => {
@@ -152,7 +165,7 @@
     const files = [...event.target.files];
     uploadQueue = files.map((file) => ({ file, done: false, status: `${file.size < 1048576 ? `${Math.ceil(file.size / 1024)} KB` : `${(file.size / 1048576).toFixed(1)} MB`} · 等待上传` }));
     event.target.value = '';
-    $('#upload-message').textContent = `${files.length} 个文件已选择。点击“开始上传”发送到 pCloud。`;
+    $('#upload-message').textContent = `${files.length} 个文件待上传`;
     renderQueue();
   });
   $('#choose-files').addEventListener('keydown', (event) => {
@@ -182,11 +195,11 @@
     uploadRequest = null;
     renderQueue();
     await refreshCloud();
-    $('#upload-message').textContent = canceled ? '已停止上传。请刷新目录检查已完成的文件。' : !completed ? '本次没有文件上传成功，请查看上方错误。' : `本次 ${completed} 个文件上传成功。${cloudAssets.length <= previousCount ? '目录暂未出现新文件，请稍后刷新；不要重复上传。' : '目录已刷新，无需登记或复制分享链接。'}`;
+    $('#upload-message').textContent = canceled ? '已停止上传。请刷新目录检查已完成的文件。' : !completed ? '本次没有文件上传成功，请查看上方错误。' : `本次 ${completed} 个文件上传成功。${cloudAssets.length <= previousCount ? '目录暂未出现新文件，请稍后刷新；不要重复上传。' : '目录已更新。'}`;
   });
   $('#upload-cancel').addEventListener('click', () => uploadRequest?.abort());
   $('#upload-dialog').addEventListener('cancel', (event) => { if (uploading) { event.preventDefault(); $('#upload-message').textContent = '请先点击“停止上传”，再关闭窗口。'; } });
-  $('#refresh-button').addEventListener('click', () => { if (!isCloud()) openSettings('先连接素材文件夹，之后无需逐个登记素材。'); else refreshCloud(); });
+  $('#refresh-button').addEventListener('click', () => { if (!isCloud()) openSettings('请连接素材文件夹。'); else { toast('正在刷新素材…'); refreshCloud(true); } });
 
   function confirmChange(message, action) {
     pendingChange = action;
@@ -207,13 +220,7 @@
     return node;
   }
 
-  function toast(message) {
-    const node = $('#toast');
-    node.textContent = message;
-    node.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { node.hidden = true; }, 4500);
-  }
+  function toast(message) { window.StudioMotion.toast(message); }
 
   function safeUrl(value, localAllowed = true) {
     if (typeof value !== 'string' || value.length > 2048) return '';
@@ -328,11 +335,13 @@
     catch { toast('浏览器无法保存收藏，请检查本地存储设置。'); return; }
     favorites = next;
     render();
+    toast(favorites.has(asset.id) ? '已收藏' : '已取消收藏');
     if (activeAsset) updateDetailFavorite();
   }
 
   function cardFor(asset) {
     const card = element('article', 'asset-card');
+    card.dataset.id = asset.id;
     const preview = element('button', 'preview-button');
     preview.setAttribute('aria-label', `预览 ${asset.name}`);
     if (asset.type === 'audio') preview.append(audioArt());
@@ -343,7 +352,7 @@
       image.loading = 'lazy';
       image.addEventListener('error', () => { image.replaceWith(fallback(asset.type, '预览暂时不可用')); }, { once: true });
       preview.append(image);
-    } else preview.append(fallback(asset.type, asset.cloud ? '打开 pCloud 查看与下载' : asset.previewUrl ? '点击播放预览' : '尚未添加小预览'));
+    } else preview.append(fallback(asset.type, asset.cloud ? '在 pCloud 预览' : asset.previewUrl ? '点击播放预览' : '暂无预览'));
     preview.append(element('span', 'card-type', TYPES[asset.type]), element('span', 'preview-open', '↗'));
     preview.addEventListener('click', () => openDetail(asset));
     const content = element('div', 'card-content');
@@ -356,7 +365,9 @@
     titleRow.append(title, favorite);
     const bottom = element('div', 'card-bottom');
     bottom.append(element('span', '', `${asset.member || '未署名'} · ${asset.date.slice(5).replace('-', '/')}`), element('span', asset.demo ? 'demo-tag' : '', fileSize(asset)));
-    content.append(titleRow, element('p', 'card-description', asset.description || '给这份素材添加一点使用说明。'), tagsFor(asset), bottom);
+    content.append(titleRow);
+    if (!asset.cloud && asset.description) content.append(element('p', 'card-description', asset.description));
+    content.append(tagsFor(asset), bottom);
     card.append(preview, content);
     return card;
   }
@@ -369,7 +380,7 @@
       const matchesType = activeType === 'all' || (activeType === 'favorites' ? favorites.has(asset.id) : asset.type === activeType);
       return matchesType && [asset.name, asset.description, asset.member, ...asset.tags].join(' ').toLocaleLowerCase('zh-CN').includes(term);
     }).sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN') : sort === 'oldest' ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date));
-    $('#asset-grid').replaceChildren(...visible.map(cardFor));
+    window.StudioMotion.grid($('#asset-grid'), visible.map(cardFor));
     $('#empty-state').hidden = visible.length > 0 || cloudBusy;
     $('#library-title').textContent = TITLES[activeType];
     const demoCount = visible.filter((asset) => asset.demo).length;
@@ -399,13 +410,13 @@
     activeAsset = asset;
     $('#detail-type').textContent = `${TYPES[asset.type]}${asset.demo ? ' / 项目演示' : ' / pCloud 原文件'}`;
     $('#detail-name').textContent = asset.name;
-    $('#detail-description').textContent = asset.description || '暂无素材说明。';
+    $('#detail-description').textContent = asset.cloud ? '' : asset.description || '';
     $('#detail-tags').replaceChildren(tagsFor(asset));
     $('#detail-meta').replaceChildren(element('span', '', `上传成员：${asset.member || '未署名'}`), element('span', '', `添加日期：${asset.date}`), element('span', '', fileSize(asset)));
     const preview = $('#detail-preview');
     preview.replaceChildren();
     const url = safeUrl(asset.previewUrl);
-    if (!url) preview.append(fallback(asset.type, '这份素材没有小预览，可打开 pCloud 查看原文件。'));
+    if (!url) preview.append(fallback(asset.type, '在 pCloud 预览'));
     else {
       const audio = !asset.cloud && asset.type === 'audio';
       const video = !asset.cloud && /\.(mp4|webm)(?:[?#]|$)/i.test(url);
@@ -413,17 +424,17 @@
       if (audio || video) { media.controls = true; media.preload = 'metadata'; media.setAttribute('playsinline', ''); }
       else media.alt = asset.name;
       media.src = url;
-      media.addEventListener('error', () => { preview.replaceChildren(fallback(asset.type, '预览暂时无法打开，请通过原文件链接查看。')); }, { once: true });
+      media.addEventListener('error', () => { preview.replaceChildren(fallback(asset.type, '预览不可用')); }, { once: true });
       preview.append(media);
     }
     const download = $('#detail-download');
     download.href = safeUrl(asset.sourceUrl);
-    download.textContent = asset.demo ? '↓ 下载演示文件' : asset.cloud ? '↗ 在 pCloud 预览 / 下载' : '↗ 在 pCloud 获取原文件';
+    download.textContent = asset.demo ? '↓ 下载演示文件' : asset.cloud ? '↗ 预览 / 下载' : '↗ 在 pCloud 获取原文件';
     if (asset.demo) download.setAttribute('download', asset.sourceUrl.split('/').pop());
     else download.removeAttribute('download');
-    $('#detail-note').textContent = asset.demo ? '这是项目附带的演示文件，不代表 pCloud 仓库已连接。' : asset.cloud ? '图片可显示云端缩略图。音视频播放与原文件下载需打开 pCloud 文件夹，选择同名文件。' : '原文件在 pCloud 托管，点击后打开官方共享页面。';
+    $('#detail-note').textContent = asset.demo ? '这是项目附带的演示文件，不代表 pCloud 仓库已连接。' : asset.cloud ? '在 pCloud 文件夹选择同名文件。' : '';
     updateDetailFavorite();
-    $('#detail-dialog').showModal();
+    window.StudioMotion.open($('#detail-dialog'));
   }
 
   function openSettings(message = '') {
@@ -433,7 +444,7 @@
     $('#cloud-region').value = catalog.config.region;
     $('#settings-error').textContent = '';
     $('#settings-message').textContent = message;
-    $('#settings-dialog').showModal();
+    window.StudioMotion.open($('#settings-dialog'));
   }
 
   function exportFile(filename, content, type) {
@@ -454,12 +465,12 @@
   $('#settings-button').addEventListener('click', () => openSettings());
   $('#mobile-settings-button').addEventListener('click', () => openSettings());
   $('#upload-button').addEventListener('click', openUpload);
-  $('#add-button').addEventListener('click', () => { $('#form-error').textContent = ''; $('#add-dialog').showModal(); });
+  $('#add-button').addEventListener('click', () => { $('#form-error').textContent = ''; window.StudioMotion.open($('#add-dialog')); });
   $('#detail-favorite').addEventListener('click', () => toggleFavorite(activeAsset));
   document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => {
     const dialog = button.closest('dialog');
     if (dialog.id === 'upload-dialog' && uploading) { $('#upload-message').textContent = '请先点击“停止上传”，再关闭窗口。'; return; }
-    dialog.close();
+    window.StudioMotion.close(dialog);
   }));
   document.querySelectorAll('dialog').forEach((dialog) => {
     dialog.addEventListener('close', () => {
@@ -483,7 +494,7 @@
     try {
       saveCatalog({ ...catalog, assets: [asset, ...catalog.assets] });
       event.currentTarget.reset();
-      $('#add-dialog').close();
+      window.StudioMotion.close($('#add-dialog'));
       $('#search-input').value = '';
       setType('all');
       toast('已保存本机草稿。导出目录并发布后，团队才能看到。');
@@ -552,6 +563,7 @@
     });
   });
 
+  window.StudioMotion.bindDialogs();
   render();
   refreshCloud();
   if (storageWarning) toast(storageWarning);
