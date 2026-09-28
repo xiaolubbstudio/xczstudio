@@ -1,7 +1,7 @@
 // 仅修改连接配置时需要发布；日常素材上传和目录更新直接通过 pCloud 完成。请勿填写账号密码或 token。
 window.STUDIO_CATALOG = {
   version: 1,
-  config: { clientId: "", folderUrl: "https://u.pcloud.link/publink/show?code=kZ83A4JZwDmBKAH0zB4gPoA5Cy55Py9CIkwk", region: "us" },
+  config: { clientId: "ATBUUGjOPQY", folderUrl: "https://u.pcloud.link/publink/show?code=kZ83A4JZwDmBKAH0zB4gPoA5Cy55Py9CIkwk", region: "us" },
   assets: [
     { id: "demo-sunset", name: "日落橙 · 渐变背景", type: "image", tags: ["渐变", "暖色", "背景"], description: "项目自带的 SVG 演示素材，可用于测试预览和下载。不是已上传到 pCloud 的素材。", member: "小橙子", date: "2026-09-27", sizeMB: null, previewUrl: "assets/sunset.svg", sourceUrl: "assets/sunset.svg", demo: true },
     { id: "demo-green", name: "山间绿 · 几何背景", type: "image", tags: ["几何", "清新", "背景"], description: "项目自带的 SVG 演示背景。下载后可在支持 SVG 的软件中使用。", member: "小橙子", date: "2026-09-26", sizeMB: null, previewUrl: "assets/landscape.svg", sourceUrl: "assets/landscape.svg", demo: true },
