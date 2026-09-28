@@ -27,9 +27,16 @@
     const region = params.get('locationid') === '1' ? 'us' : params.get('locationid') === '2' ? 'eu' : null;
     if (!region || params.get('hostname') !== HOSTS[region]) throw new Error('pCloud 返回的数据地区无效。');
     if (region !== pending.region) throw new Error(`你的账号使用${region === 'eu' ? '欧洲' : '美国'}区，素材库使用${pending.region === 'eu' ? '欧洲' : '美国'}区，无法共享这个文件夹。`);
+    for (const key of ['state', 'locationid', 'hostname', 'access_token', 'token_type', 'uid']) {
+      if (params.getAll(key).length > 1) throw new Error('pCloud 返回了重复的登录字段，请重新登录。');
+    }
     const token = params.get('access_token');
-    const uid = Number(params.get('uid'));
-    if (!token || token.length > 4096 || /[\u0000-\u0020]/.test(token) || params.get('token_type') !== 'bearer' || !Number.isSafeInteger(uid) || uid <= 0) throw new Error('pCloud 没有返回有效的登录信息。');
+    if (!token || token.length > 4096 || /[\u0000-\u0020]/.test(token)) throw new Error('pCloud 没有返回有效的登录令牌，请从素材库重新发起登录。');
+    // The official JS SDK consumes access_token and locationid. Identity is
+    // verified through userinfo instead of requiring optional callback fields.
+    if (params.has('token_type') && params.get('token_type').toLowerCase() !== 'bearer') throw new Error('pCloud 返回的令牌类型不受支持，请重新登录。');
+    const uid = params.has('uid') ? Number(params.get('uid')) : null;
+    if (params.has('uid') && (!/^[1-9]\d*$/.test(params.get('uid')) || !Number.isSafeInteger(uid))) throw new Error('pCloud 返回的账号信息无效，请重新登录。');
     return { token, uid, region, clientId: clientId(pending.clientId), created: now };
   }
 
@@ -56,7 +63,7 @@
     root.location.assign(url);
   }
 
-  function finish() {
+  async function finish() {
     const fragment = root.location.hash;
     // 清除地址中的令牌，再做任何后续操作。
     root.history.replaceState(null, '', root.location.pathname);
@@ -64,7 +71,26 @@
     const pending = JSON.parse(root.sessionStorage.getItem(PENDING) || 'null');
     root.sessionStorage.removeItem(PENDING);
     const session = callback(fragment, pending);
-    root.sessionStorage.setItem(SESSION, JSON.stringify(session));
+    const controller = new root.AbortController();
+    const timeout = root.setTimeout(() => controller.abort(), 15000);
+    try {
+      // Never put the token in a URL. Store a session only after pCloud has
+      // confirmed the identity; a callback without uid cannot skip this check.
+      const response = await root.fetch(`https://${HOSTS[session.region]}/userinfo`, {
+        method: 'POST', body: new URLSearchParams({ access_token: session.token }),
+        signal: controller.signal, credentials: 'omit', cache: 'no-store', redirect: 'error'
+      });
+      if (!response.ok) throw new Error('pCloud 暂时无法核实登录，请回到素材库重试。');
+      const data = await response.json();
+      if (data.result !== 0 || !Number.isSafeInteger(data.userid) || data.userid <= 0) throw new Error('pCloud 未确认有效的登录账号，请重新登录。');
+      if (session.uid !== null && session.uid !== data.userid) throw new Error('登录身份不匹配，请重新登录。');
+      root.sessionStorage.setItem(SESSION, JSON.stringify({ ...session, uid: data.userid }));
+    } catch (error) {
+      if (error.name === 'AbortError' || error instanceof TypeError || error instanceof SyntaxError) throw new Error('无法连接 pCloud 核实登录，请回到素材库重试。');
+      throw error;
+    } finally {
+      root.clearTimeout(timeout);
+    }
   }
 
   function logout() {

@@ -1,7 +1,7 @@
-(() => {
+(async () => {
   'use strict';
   try {
-    window.PCloudAuth.finish();
+    await window.PCloudAuth.finish();
     window.location.replace('./');
   } catch (error) {
     document.querySelector('h1').textContent = '登录未完成';
