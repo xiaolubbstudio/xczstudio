@@ -8,6 +8,8 @@
 !/styles.css
 !/app.js
 !/pcloud-client.js
+!/google-drive-client.js
+!/google-drive-auth.js
 !/pcloud-auth.js
 !/auth.html
 !/auth-callback.js
@@ -27,11 +29,13 @@
 !/scripts/start-preview.ps1
 !/scripts/pcloud-client.test.cjs
 !/scripts/pcloud-auth.test.cjs
+!/scripts/google-drive.test.cjs
 !/scripts/smoke-test.cjs
 !/docs/
 /docs/*
 !/docs/最小版验收.md
 !/docs/发布与同步.md
+!/docs/Google-Drive接入.md
 
 !/motion.js
 !/motion.css

@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const port = Number(process.env.PORT || 4173);
+const host = process.env.PREVIEW_HOST === 'localhost' ? 'localhost' : '127.0.0.1';
 const mime = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.mp4': 'video/mp4', '.webm': 'video/webm' };
 
 http.createServer((request, response) => {
@@ -11,7 +12,7 @@ http.createServer((request, response) => {
   let relative;
   try { relative = decodeURIComponent(new URL(request.url, 'http://localhost').pathname).replace(/^\/+/, '') || 'index.html'; }
   catch { response.writeHead(400); response.end(); return; }
-  const allowed = ['index.html', 'auth.html', 'styles.css', 'motion.css', 'motion.js', 'app.js', 'pcloud-auth.js', 'auth-callback.js', 'pcloud-client.js', 'data/catalog.js', '.nojekyll'].includes(relative) || relative.startsWith('assets/');
+  const allowed = ['index.html', 'auth.html', 'styles.css', 'motion.css', 'motion.js', 'app.js', 'pcloud-auth.js', 'auth-callback.js', 'pcloud-client.js', 'google-drive-client.js', 'google-drive-auth.js', 'data/catalog.js', '.nojekyll'].includes(relative) || relative.startsWith('assets/');
   const target = path.resolve(root, relative);
   if (!allowed || !target.startsWith(root + path.sep) || relative.includes('..') || relative.includes('\\')) { response.writeHead(404); response.end('Not found'); return; }
   fs.stat(target, (error, stat) => {
@@ -34,4 +35,4 @@ http.createServer((request, response) => {
     if (request.method === 'HEAD') response.end();
     else fs.createReadStream(target, { start, end }).on('error', () => response.destroy()).pipe(response);
   });
-}).listen(port, '127.0.0.1', () => console.log(`小橙子资源库：http://127.0.0.1:${port}`));
+}).listen(port, host, () => console.log(`小橙子资源库：http://${host}:${port}`));
