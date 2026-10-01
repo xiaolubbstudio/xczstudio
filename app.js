@@ -7,6 +7,36 @@
   const STORAGE_KEY = 'orange-library-catalog-v1';
   const FAVORITES_KEY = 'orange-library-favorites-v1';
   const VIEW_KEY = 'orange-library-view-v1';
+  const THEME_KEY = 'orange-library-theme-v1';
+  const logo = $('.studio-lockup');
+  function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    $('#logo-theme').setAttribute('aria-pressed', String(theme === 'light'));
+    $('#logo-theme').setAttribute('aria-label', theme === 'light' ? '切换到黑夜模式' : '切换到白天模式');
+    $('meta[name="theme-color"]').content = theme === 'light' ? '#eeefeb' : '#111315';
+  }
+  let savedTheme = 'dark';
+  try { savedTheme = localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'; } catch { /* theme stays usable */ }
+  applyTheme(savedTheme);
+  function toggleTheme() {
+    const theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    applyTheme(theme);
+    try { localStorage.setItem(THEME_KEY, theme); } catch { /* theme stays usable */ }
+  }
+  $('#logo-theme').addEventListener('click', toggleTheme);
+  $('#logo-theme').addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleTheme(); }
+  });
+  function highlightLogo(event) {
+    const layer = event.target.closest('[data-logo-layer]')?.dataset.logoLayer;
+    if (layer) logo.dataset.highlight = layer;
+    else delete logo.dataset.highlight;
+  }
+  logo.addEventListener('pointerover', highlightLogo);
+  logo.addEventListener('pointerleave', () => delete logo.dataset.highlight);
+  logo.addEventListener('focusin', highlightLogo);
+  logo.addEventListener('focusout', () => delete logo.dataset.highlight);
+  logo.addEventListener('pointerup', event => { if (event.pointerType !== 'mouse') delete logo.dataset.highlight; });
   const published = window.STUDIO_CATALOG;
   let catalog = published;
   let draft = false;
@@ -50,6 +80,20 @@
   let thumbnailScope = '';
   let thumbnailController = new AbortController();
   const thumbnails = new Map();
+  // 检查已解码的本机图片，不为透明度另发网络请求。
+  function imageSurface(image) {
+    try {
+      const canvas = document.createElement('canvas');
+      const scale = Math.min(1, 256 / Math.max(image.naturalWidth, image.naturalHeight));
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      for (let i = 3; i < pixels.length; i += 4) if (pixels[i] < 250) return 'transparent';
+      return 'opaque';
+    } catch { return 'unknown'; }
+  }
   function previewKey(input, session, asset, part) {
     return [input.provider || 'pcloud', input.folderUrl || '', input.folderPath || '/', session?.username || session?.uid || 'public', asset.id, asset.modified || asset.date, asset.sizeMB, part, 'original-v1'];
   }
@@ -85,6 +129,12 @@
       const url = await item.promise;
       if (!url || signal.aborted || !button.isConnected) return;
       const image = element('img'); image.src = url; image.alt = asset.name; image.decoding = 'async';
+      if (item.surface) button.dataset.surface = item.surface;
+      image.addEventListener('load', () => {
+        if (signal.aborted || !button.isConnected) return;
+        item.surface ||= asset.type === 'video' ? 'opaque' : imageSurface(image);
+        button.dataset.surface = item.surface;
+      }, { once: true });
       image.addEventListener('error', () => image.remove(), { once: true });
       button.querySelector('.preview-fallback')?.remove();
       button.prepend(image);
@@ -130,8 +180,9 @@
       await refreshMember(isOpenList() && memberSession()?.token === listSession?.token ? data.access : undefined);
     } catch (error) {
       if (cloudRequest !== controller) return;
-      cloudStatus(`目录未能更新：${controller.signal.aborted ? '连接超时，请重试。' : error.message}`, true);
-      if (notify) toast('刷新失败，请重试');
+      const needsLogin = isOpenList() && error.code === 401;
+      cloudStatus(needsLogin ? '请先登录素材库。' : `目录未能更新：${controller.signal.aborted ? '连接超时，请重试。' : error.message}`, !needsLogin);
+      if (notify) toast(needsLogin ? '请先登录素材库' : '刷新失败，请重试');
     } finally {
       clearTimeout(timeout);
       if (cloudRequest === controller) { cloudBusy = false; $('#refresh-button').disabled = false; render(); }
@@ -146,9 +197,9 @@
     $('#member-avatar svg').toggleAttribute('hidden', Boolean(avatar));
     if (avatar) { if (image.getAttribute('src') !== avatar) image.src = avatar; }
     else image.removeAttribute('src');
-    $('#member-avatar').setAttribute('aria-label', member ? `${member.name} · ${cloudName()} 账号` : `我的 ${cloudName()} 账号`);
+    $('#member-avatar').setAttribute('aria-label', member ? `${member.name} · ${cloudName()} 账号` : signedIn ? '我的账号' : `登录 ${cloudName()}`);
     image.alt = `${cloudName()} 头像`;
-    $('#member-login-button').textContent = signedIn ? '我的账号' : isOpenList() ? '成员登录' : `登录 ${isGoogle() ? 'Google' : 'pCloud'}`;
+    $('#member-avatar').title = $('#member-avatar').getAttribute('aria-label');
     $('#openlist-login-form').hidden = !isOpenList() || signedIn;
     $('#member-status').textContent = message || (memberBusy ? '核实上传权限中…' : signedIn && !member?.canUpload ? isGoogle() ? '请授权素材文件夹并核实编辑权限' : '此账号尚未获得素材文件夹上传权限' : '');
     $('#member-info').textContent = member ? `${member.name} · ${member.canUpload ? '已获得上传权限' : '尚未获得上传权限'}` : signedIn ? '请核实素材文件夹授权和成员权限。' : `请使用受邀的 ${isGoogle() ? 'Google' : 'pCloud'} 账号登录。`;
@@ -157,16 +208,18 @@
     $('#member-authorize').textContent = `登录 ${isGoogle() ? 'Google' : 'pCloud'}`;
     $('#member-folder-authorize').hidden = !isGoogle() || !signedIn || member?.canUpload === true;
     $('#member-folder-authorize').disabled = memberBusy;
-    $('#member-permission-help').textContent = isOpenList() ? '使用管理员为你创建的独立账号。上传仍在验收中。' : isGoogle() ? '首次登录后，在 Google 文件夹选择器中选择素材文件夹。只授权所选文件夹；上传权限由 Drive 共享设置校验。' : '应用可获所有文件夹权限；本站只操作素材文件夹。';
-    $('#member-logout').hidden = !signedIn;
+    $('#member-permission-help').textContent = isOpenList() ? '使用管理员为你创建的成员账号。' : isGoogle() ? '首次登录后，在 Google 文件夹选择器中选择素材文件夹。只授权所选文件夹；上传权限由 Drive 共享设置校验。' : '应用可获所有文件夹权限；本站只操作素材文件夹。';
+    $('#member-logout').disabled = !signedIn;
     $('#member-recheck').hidden = !signedIn;
     $('#member-recheck').disabled = memberBusy;
     $('#member-login-message').textContent = isOpenList() ? '' : catalog.config.clientId ? '' : `管理员正在配置 ${cloudName()} 登录。`;
     if (isOpenList()) {
       $('#member-info').textContent = member ? `${member.name} · 已登录` : signedIn ? '正在核实账号…' : '请使用你的素材库成员账号。';
-      $('#member-status').textContent = message || (memberBusy ? '核实账号中…' : signedIn ? '云端上传尚未完成验收' : '');
+      $('#member-status').textContent = message || (memberBusy ? '核实账号中…' : signedIn && !member?.canUpload ? '此账号没有上传权限' : '');
     }
     $('#upload-button').replaceChildren(icon('arrow-up'), document.createTextNode('上传素材'));
+    $('#upload-button').setAttribute('aria-label', '上传素材');
+    $('#upload-button').title = '上传素材';
   }
 
   async function refreshMember(directoryAccess) {
@@ -211,7 +264,6 @@
     window.StudioMotion.open($('#member-dialog'));
   }
 
-  $('#member-login-button').addEventListener('click', openMember);
   $('#member-avatar').addEventListener('click', openMember);
   $('#member-avatar-image').addEventListener('error', () => {
     $('#member-avatar-image').hidden = true;
@@ -230,7 +282,7 @@
     $('#member-dialog').close();
     let message = '';
     try {
-      await window.GoogleDriveAuth.selectFolder(catalog.config, cloudFolderName || '雷霆素材库');
+      await window.GoogleDriveAuth.selectFolder(catalog.config, cloudFolderName || '正经素材库');
       await refreshMember();
     } catch (error) { message = error.message; }
     openMember();
@@ -364,7 +416,7 @@
     document.querySelectorAll('[data-type]').forEach(button => button.querySelector('span').replaceChildren(icon(types[button.dataset.type])));
     document.querySelectorAll('[data-icon]').forEach(node => node.replaceChildren(icon(node.dataset.icon)));
     $('.search > span').replaceChildren(icon('magnifying-glass'));
-    document.querySelectorAll('[data-view]').forEach(button => button.replaceChildren(icon(button.dataset.view === 'grid' ? 'squares-four' : 'list')));
+    document.querySelectorAll('[data-view]').forEach(button => button.replaceChildren(icon(button.dataset.view === 'grid' ? 'squares-four' : 'list'), document.createTextNode(button.dataset.view === 'grid' ? '缩略图' : '列表')));
     document.querySelectorAll('.dialog-close').forEach(button => button.replaceChildren(icon('x')));
   }
 
@@ -437,7 +489,7 @@
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       const local = JSON.parse(saved);
-      if (local._publishedConnection === JSON.stringify(published.config) || !local._publishedConnection && published.config.provider !== 'google') { catalog = validateCatalog(local); draft = true; }
+      if (local._publishedConnection === JSON.stringify(published.config) || !local._publishedConnection && (!published.config.provider || published.config.provider === 'pcloud')) { catalog = validateCatalog(local); draft = true; }
       else storageWarning = '网站连接已更新，已使用最新发布的设置。旧本机设置仍保留在此浏览器。';
     }
     const savedFavorites = JSON.parse(localStorage.getItem(FAVORITES_KEY) || '[]');
@@ -500,6 +552,7 @@
     const card = element('article', 'asset-card');
     card.dataset.id = asset.id;
     const preview = element('button', 'preview-button');
+    if (asset.type === 'video') preview.dataset.surface = 'opaque';
     preview.setAttribute('aria-label', `预览 ${asset.name}`);
     // 先显示占位图，进入可见区域后读取小型缩略图；视频不自动播放。
     if (asset.type === 'audio') preview.append(audioArt());
@@ -636,6 +689,7 @@
     $('#detail-tags').replaceChildren(tagsFor(asset));
     $('#detail-meta').replaceChildren(element('span', '', `上传成员：${asset.member || '未署名'}`), element('span', '', `添加日期：${asset.date}`), element('span', '', fileSize(asset)));
     const preview = $('#detail-preview');
+    preview.dataset.surface = asset.type === 'video' ? 'opaque' : 'unknown';
     preview.replaceChildren();
     preview.append(fallback(asset.type, '正在读取预览…'));
     const download = $('#detail-download');
@@ -701,7 +755,10 @@
         const url = await loadPart(audio ? 'audio' : 'image', audio ? originalSource : imageSource, audio ? 'audio' : 'image', 20 * 1048576);
         if (!current()) return;
         const media = element(audio ? 'audio' : 'img'); media.src = url;
-        if (audio) { media.controls = true; media.preload = 'none'; } else media.alt = asset.name;
+        if (audio) { media.controls = true; media.preload = 'none'; } else {
+          media.alt = asset.name;
+          media.addEventListener('load', () => { if (current()) preview.dataset.surface = imageSurface(media); }, { once:true });
+        }
         media.addEventListener('error', () => { if (current()) preview.replaceChildren(fallback(asset.type, '预览不可用')); }, { once: true });
         preview.replaceChildren(media);
       }
@@ -738,7 +795,7 @@
     $('#pcloud-fields').hidden = google || openlist;
     $('#google-fields').hidden = !google;
     $('#folder-url').placeholder = openlist ? 'https://你的后台.workers.dev/' : google ? 'https://drive.google.com/drive/folders/…' : '粘贴 pCloud 文件夹分享链接';
-    $('#connection-provider-help').textContent = openlist ? '管理员在云端创建五个独立成员账号；不要在这里填写密码或云盘令牌。此连接尚未完成上传验收。' : google ? '文件夹公开权限设为查看者；指定成员单独设为编辑者。API Key 必须限制为本网站和 Drive／Picker API。' : '在 pCloud 邀请成员并授予上传权限。旧的匿名上传入口需在 pCloud 停用。';
+    $('#connection-provider-help').textContent = openlist ? '管理员在云端创建五个独立成员账号；不要在这里填写密码或云盘令牌。文件保存在中国移动云盘。' : google ? '文件夹公开权限设为查看者；指定成员单独设为编辑者。API Key 必须限制为本网站和 Drive／Picker API。' : '在 pCloud 邀请成员并授予上传权限。旧的匿名上传入口需在 pCloud 停用。';
   }
   function fillSettings() {
     $('#storage-provider').value = catalog.config.provider || 'pcloud';
@@ -769,6 +826,11 @@
 
   document.querySelectorAll('[data-type]').forEach((button) => button.addEventListener('click', () => setType(button.dataset.type)));
   $('#search-input').addEventListener('input', render);
+  $('#clear-search').addEventListener('click', () => {
+    $('#search-input').value = '';
+    render();
+    $('#search-input').focus({ preventScroll:true });
+  });
   $('#sort-select').addEventListener('change', render);
   $('#folder-filter').addEventListener('change', render);
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
@@ -864,6 +926,31 @@
 
   window.StudioMotion.bindDialogs();
   decorateChrome();
+  $('#organize-button').addEventListener('click', () => window.StudioMotion.open($('#organize-dialog')));
+  $('#tools-menu').addEventListener('click', event => {
+    if (event.target.closest('button') && $('#tools-menu').matches(':popover-open')) $('#tools-menu').hidePopover();
+  });
+  const dock = $('.library-dock');
+  let dockIdleTimer, previousScrollY = window.scrollY;
+  function showDock() {
+    clearTimeout(dockIdleTimer);
+    dock.classList.remove('is-scroll-moving');
+    dock.inert = false;
+    dock.removeAttribute('aria-hidden');
+  }
+  window.addEventListener('scroll', () => {
+    const distance = window.scrollY - previousScrollY;
+    previousScrollY = window.scrollY;
+    if (document.activeElement === $('#search-input') || distance <= 2) { showDock(); return; }
+    dock.classList.add('is-scroll-moving');
+    dock.inert = true;
+    dock.setAttribute('aria-hidden', 'true');
+    clearTimeout(dockIdleTimer);
+    dockIdleTimer = setTimeout(showDock, 120);
+  }, { passive:true });
+  window.addEventListener('scrollend', showDock, { passive:true });
+  dock.addEventListener('focusin', showDock);
+  dock.addEventListener('pointerenter', showDock);
   render();
   refreshCloud();
   if (storageWarning) toast(storageWarning);

@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const input = { provider: 'openlist', folderUrl: 'https://library.example.test/', folderPath: '/' };
 function browser(fetch) {
   const memory = new Map();
-  const scope = { URL, Date, AbortSignal, sessionStorage: { getItem: key => memory.get(key), setItem: (key, value) => memory.set(key, value), removeItem: key => memory.delete(key) }, fetch };
+  const scope = { URL, Date, AbortSignal, Uint8Array, crypto: require("node:crypto").webcrypto, sessionStorage: { getItem: key => memory.get(key), setItem: (key, value) => memory.set(key, value), removeItem: key => memory.delete(key) }, fetch };
   scope.window = scope;
   vm.createContext(scope);
   for (const name of ['openlist-client.js', 'openlist-auth.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', name), 'utf8'), scope);
@@ -92,7 +92,7 @@ test('signed original links support media and reject credential leaks and direct
   for (const folderUrl of ['http://library.example.test/', input.folderUrl + '?token=secret', input.folderUrl + '#secret', 'https://user:secret@library.example.test/', input.folderUrl + 'api']) assert.throws(() => b.OpenListClient.config({ ...input, folderUrl }));
 });
 
-test('directory traversal keeps nested originals and does not expose unverified upload', async () => {
+test('directory traversal keeps nested originals and respects server upload permission', async () => {
   let directoryRequests = 0;
   const b = browser(async (url, options) => {
     if (url.endsWith('/login')) return response({ token: 'fixture' });
@@ -109,8 +109,51 @@ test('directory traversal keeps nested originals and does not expose unverified 
   assert.equal(data.assets[0].sizeMB, 300);
   assert.equal(directoryRequests, 2); // 根目录与一个子目录，不重复核实根目录。
   assert.equal(data.access.hasWritePermission, true);
-  assert.equal(data.access.canUpload, false);
-  assert.equal(data.access.uploadPending, true);
-  assert.equal((await b.OpenListClient.memberAccess(input, b.OpenListAuth.get(input))).canUpload, false);
-  await assert.rejects(b.OpenListClient.upload());
+  assert.equal(data.access.canUpload, true);
+  assert.equal(data.access.uploadPending, undefined);
+  assert.equal((await b.OpenListClient.memberAccess(input, b.OpenListAuth.get(input))).canUpload, true);
+  await assert.rejects(b.OpenListClient.upload(input));
+});
+
+
+test('chunked upload binds authorization and verifies completion before reporting 100 percent', async () => {
+  const calls = [], progress = [], file = new Blob([new Uint8Array(8 * 1048576 + 9)]);
+  file.name = 'sample.mov';
+  const b = browser(async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith('/login')) return response({ token: 'fixture' });
+    if (url.endsWith('/me')) return response({ username: 'member', role: 0, permission: 8 });
+    if (url.startsWith('https://library.example.test/')) assert.equal(options.headers.Authorization, 'fixture');
+    if (url.endsWith('/start')) {
+      const body = JSON.parse(options.body);
+      assert.equal(body.path, '/'); assert.equal(body.size, file.size);
+      assert.match(body.sha256, /^[a-f0-9]{64}$/);
+      return response({ ticket: 'opaque-ticket', chunkSize: 8 * 1048576, ready: false });
+    }
+    if (url.endsWith('/part_link')) {
+      const body = JSON.parse(options.body); assert.equal(body.ticket, 'opaque-ticket');
+      return response({ url: 'https://upload.cmecloud.cn/file?part=' + body.part });
+    }
+    if (url.startsWith('https://upload.cmecloud.cn/')) {
+      assert.equal(options.method, 'PUT'); assert.equal(options.headers.Authorization, undefined);
+      assert.equal(options.body.size, url.endsWith('part=1') ? 8 * 1048576 : 9);
+      return response(null);
+    }
+    assert.equal(progress.includes(100), false);
+    return response({ name: file.name, size: file.size });
+  });
+  await b.OpenListAuth.begin(input, 'member', 'fixture');
+  await b.OpenListClient.upload(input, file, value => progress.push(value));
+  assert.equal(calls.filter(c => c.url.startsWith('https://upload.cmecloud.cn/')).length, 2);
+  assert.equal(progress.at(-1), 100);
+  await assert.rejects(b.OpenListClient.upload({ ...input, folderUrl: 'https://other.example.test/' }, file));
+});
+
+test('failed cloud upload cannot report success or persist an upload ticket', async () => {
+  const b = browser(async url => response(url.endsWith('/login') ? { token: 'fixture' } : url.endsWith('/me') ? { username: 'member', role: 0 } : url.endsWith('/start') ? { ticket: 'opaque-ticket', chunkSize: 8 * 1048576 } : url.endsWith('/part_link') ? { url: 'https://upload.cmecloud.cn/file' } : null, url.startsWith('https://upload.cmecloud.cn/') ? 403 : 200));
+  await b.OpenListAuth.begin(input, 'member', 'fixture');
+  const file = new Blob(['test']); file.name = 'test.txt'; const progress = [];
+  await assert.rejects(b.OpenListClient.upload(input, file, value => progress.push(value)));
+  assert.equal(progress.includes(100), false);
+  assert.equal(b.sessionStorage.getItem('opaque-ticket'), undefined);
 });

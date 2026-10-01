@@ -8,7 +8,7 @@ const previewUrl = process.env.PREVIEW_URL || 'http://127.0.0.1:4173';
   const sandbox = { window: {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../data/catalog.js'), 'utf8'), sandbox);
   const config = sandbox.window.STUDIO_CATALOG.config;
-  const cloud = config.provider === 'google' ? require('../google-drive-client.js') : require('../pcloud-client.js');
+  const cloud = config.provider === 'openlist' ? require('../openlist-client.js') : config.provider === 'google' ? require('../google-drive-client.js') : require('../pcloud-client.js');
   cloud.config(config);
   const script = await fetch(previewUrl + '/pcloud-client.js');
   assert.equal(script.status, 200);
@@ -19,9 +19,16 @@ const previewUrl = process.env.PREVIEW_URL || 'http://127.0.0.1:4173';
   assert.equal((await script.text()).includes('/uploadtolink'), false);
   const hidden = await fetch(previewUrl + '/skills/README.md');
   assert.equal(hidden.status, 404);
-  const range = await fetch(previewUrl + '/assets/chime.wav', { headers: { Range: 'bytes=0-43' } });
+  const range = await fetch(previewUrl + '/assets/sunset.svg', { headers: { Range: 'bytes=0-43' } });
   assert.equal(range.status, 206);
   assert.equal((await range.arrayBuffer()).byteLength, 44);
+  if (config.provider === 'openlist') {
+    assert.equal(config.folderPath, '/');
+    assert.equal((await fetch(previewUrl + '/openlist-client.js')).status, 200);
+    assert.equal((await fetch(previewUrl + '/openlist-auth.js')).status, 200);
+    console.log(JSON.stringify({ status: 'PASS', checks: ['云端连接配置有效', '页面与连接脚本可访问', '分段请求正确', '技能目录未公开'], note: '真实目录与上传另由登录后的云端验收验证' }));
+    return;
+  }
   const folder = await cloud.list(config, AbortSignal.timeout(20000));
   assert.ok(Array.isArray(folder.assets));
   if (config.provider === 'google') assert.match(folder.folderId, /^[a-zA-Z0-9_-]{10,200}$/);

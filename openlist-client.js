@@ -66,7 +66,7 @@
       if (seen.size >= 100) throw new Error('子目录过多，请缩小素材目录范围。');
       seen.add(folder.path);
       const data = await directory(input, folder.path, session, signal);
-      if (folder.path === settings.folderPath) access = { canUpload: false, hasWritePermission: data.write === true, uploadPending: true };
+      if (folder.path === settings.folderPath) access = { canUpload: data.write === true, hasWritePermission: data.write === true };
       for (const file of data.content) {
         if (typeof file.name !== 'string' || !file.name || /[\\/\u0000-\u001f]/.test(file.name) || ['.', '..'].includes(file.name)) throw new Error('云端返回了无效文件名。');
         const path = join(folder.path, file.name);
@@ -85,9 +85,7 @@
   }
   async function memberAccess(input, session, signal) {
     const data = await directory(input, config(input).folderPath, session, signal);
-    // Worker 的移动云盘上传尚未实现。连接验收完成前不开放上传，
-    // 也不因 /put 返回 200 就把一个空实现当作成功。
-    return { canUpload: false, hasWritePermission: data.write === true, uploadPending: true };
+    return { canUpload: data.write === true, hasWritePermission: data.write === true };
   }
   async function resolve(input, asset, signal) {
     const base = config(input).folderPath;
@@ -98,7 +96,38 @@
     return url;
   }
   function downloadUrl() { return '#'; }
-  async function upload() { throw new Error('云端上传尚未完成验收，当前不接收文件。'); }
+  async function upload(input, file, progress, signal, session = sessionFor(input)) {
+    const { endpoint, folderPath } = config(input);
+    if (!session || session.endpoint !== endpoint || !session.token || /[\u0000-\u0020]/.test(session.token)) throw new Error('请先登录当前素材库。');
+    if (!file || !Number.isSafeInteger(file.size) || file.size < 1 || file.size > 512 * 1048576 || typeof file.name !== 'string' || !file.name || file.name.length > 255 || /[\\/\u0000-\u001f]/.test(file.name) || ['.', '..'].includes(file.name)) throw new Error('请选择有效文件，单个文件上限 512 MB。');
+    signal?.throwIfAborted();
+    let bytes = await file.arrayBuffer();
+    const digest = await root.crypto.subtle.digest('SHA-256', bytes);
+    bytes = null;
+    const sha256 = Array.from(new Uint8Array(digest), n => n.toString(16).padStart(2, '0')).join('');
+    signal?.throwIfAborted();
+    const start = await request(input, 'fs/studio_upload/start', { path: folderPath, name: file.name, size: file.size, sha256 }, session, signal);
+    if (!start?.ticket || start.chunkSize !== 8 * 1048576) throw new Error('后台未返回有效上传会话。');
+    for (let offset = 0, part = 1; !start.ready && offset < file.size; offset += start.chunkSize, part++) {
+      signal?.throwIfAborted();
+      const body = file.slice(offset, Math.min(offset + start.chunkSize, file.size));
+      const signed = await request(input, 'fs/studio_upload/part_link', { ticket: start.ticket, part }, session, signal);
+      const destination = new URL(signed?.url || '');
+      if (destination.protocol !== 'https:' || destination.username || destination.password || !['139.com', '10086.cn', 'cmecloud.cn'].some(domain => destination.hostname === domain || destination.hostname.endsWith('.' + domain))) throw new Error('后台返回了无效上传地址。');
+      // The signed destination allows this part only. Never send the member token to the cloud.
+      const response = await root.fetch(destination.href, {
+        method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' },
+        body, signal, credentials: 'omit', cache: 'no-store', redirect: 'error'
+      });
+      if (!response.ok) throw new Error('分片上传失败，请重试未完成的文件。');
+      await response.body?.cancel();
+      progress?.(Math.min(99, Math.round(Math.min(offset + start.chunkSize, file.size) / file.size * 100)));
+    }
+    const result = await request(input, 'fs/studio_upload/finish', { ticket: start.ticket }, session, signal);
+    if (result?.size !== file.size || !result.name) throw new Error('尚未确认文件已保存，请刷新目录检查。');
+    progress?.(100);
+    return result;
+  }
   const api = { config, request, mediaUrl, list, directory, profile, memberAccess, resolve, downloadUrl, upload };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.OpenListClient = api;

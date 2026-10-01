@@ -1,51 +1,38 @@
-# 小橙子资源库
+# 正经素材库
 
-静态素材网站，首页以素材目录为主。
+网站：https://xiaolubbstudio.github.io/xczstudio/
 
+GitHub Pages 托管静态页面；独立 OpenList Worker 管理成员登录与目录；原文件保存在中国移动云盘。
 
-## 云端试接
+## 成员使用
 
-已准备 OpenList 后台连接和独立成员登录。五个隔离会话的接口契约测试通过，但尚无真实云端后台验收；中国移动云盘 Worker 驱动没有实现上传，因此此选项暂不接收文件。详见 [云端试接说明](docs/OpenList云端接入.md)。生产仍保持当前 pCloud 连接。
+点击右侧用户气泡，用管理员分配的素材库成员账号登录，无需 pCloud 账号。五个成员使用独立账号，访问同一个素材文件夹；不开放注册。管理员在 OpenList 的用户管理中修改用户名、密码和权限。
 
-## 已实现
+登录状态只保存于当前标签页，刷新可保留，最长八小时。记住账号只保存用户名；密码可由浏览器密码管理器保存。退出登录会撤销当前令牌。
 
-- 素材搜索、类型与文件夹筛选、名称／日期／大小排序、个人收藏。
-- 缩略图与列表视图，卡片直接下载；详情预览保留完整图片比例。去掉欢迎横幅、统计卡片和装饰动画。
-- pCloud 文件夹及其子文件夹自动读取，文件分类、大小和日期自动生成。
-- 图片及视频缩略图、素材详情。网站可通过 pCloud 官方 ZIP 接口下载单个素材，解压后即为原文件。音视频完整播放仍打开 pCloud 官方文件夹。
-- 直接在网站选择多个文件，顺序上传到 pCloud，显示进度，支持停止；上传完成后自动刷新目录。
-- 当前浏览器的个人收藏。
-- Google Drive 接入代码：公开文件夹自动读取（含分页与子目录）、原格式下载链接、官方查看器嵌入、Google Identity Services 登录、drive.file 范围与官方 Picker 文件夹授权、编辑权限检查、8 MiB 分段上传及取消。
-- Google Drive 真实连接仍需文件夹链接、限制来源的 API Key、网页 OAuth Client ID 和项目编号。首次配置步骤见 [Google Drive 接入](docs/Google-Drive接入.md)。没有填写 Google 配置前，已发布的 pCloud 目录继续工作；不会自动迁移原文件。Google 登录、嵌入预览和真实上传需管理员配置后实测。
-- 一次性连接设置、导出 catalog.js / JSON、导入 JSON 备份。日常上传不再需要登记或重新发布。
-- 适配桌面和手机，支持键盘与减少动画偏好。
+- 浏览、搜索、按文件夹与类别筛选、排序、个人收藏。
+- 图片正常预览；视频先显示缩略图，点击后加载原画质。预览存入本机缓存；缓存被清理或素材改变时需要重新加载。特殊编码仍可能无法在浏览器播放。
+- 下载原文件，不转 ZIP。
+- 站内多文件上传，8 MiB 分片直接发送到云盘，单文件上限 512 MiB。后台只校验身份、发放单个分片的临时地址和确认最终文件。上传完成后刷新目录，同名文件自动改名。
 
+## 部署与维护
 
-## 发布到 GitHub Pages
+连接配置在 `data/catalog.js`，只含公开后台地址与相对素材目录。账号获准目录由后台决定，前端不能扩大权限。云盘凭据仅保存在后台加密配置中，密码、令牌及本地账号记录不得提交 Git。
 
-将 index.html、auth.html、styles.css、motion.css、motion.js、app.js、pcloud-client.js、pcloud-auth.js、auth-callback.js、google-drive-client.js、google-drive-auth.js、assets/、data/ 和 .nojekyll 上传到公开仓库。在仓库 Settings → Pages 中选择 Deploy from a branch，选择 main 和 /(root)，保存。代码全部使用相对路径，支持项目子路径。
+日常上传无需重新发布；代码修改提交 main 后由 GitHub Pages 自动部署。实际项目位于 E 盘；`.cloud-backend`、技能、预览截图及运行时不在网站仓库中。
 
-不需要安装依赖、构建或收费 runner。仓库为 https://github.com/xiaolubbstudio/xczstudio ，网站已发布到 https://xiaolubbstudio.github.io/xczstudio/ 。Pages 使用 main 分支根目录，后续推送会自动部署。原始技能包、skills 和预览截图不会同步到仓库。
+后台限五个启用的普通成员；管理员不占成员名额。资源库 Worker 和 D1 独立于插件验证服务，Cloudflare 账号级免费额度仍共享。
 
-用户已要求后续每次修改网站都同步到该仓库。执行约定记录在 AGENTS.md，发布和更新步骤见 docs/发布与同步.md。
+原 pCloud 素材没有自动搬迁。当前页面只显示挂载的移动云盘目录；需要将原件上传到该目录才会出现。
 
-## 文件说明
+详细配置和验收记录见 [云端接入](docs/OpenList云端接入.md)。pCloud 与 Google Drive 的底层代码作为兼容实现保留，当前网站连接与登录均使用 OpenList。
 
-| 文件 | 用途 |
-| --- | --- |
-| index.html | 页面结构 |
-| styles.css | 视觉与响应式样式 |
-| app.js | 搜索、筛选、预览、收藏、上传、下载及连接设置 |
-| pcloud-client.js | 公开目录读取、缩略图、成员权限检查和上传 |
-| pcloud-auth.js / auth.html / auth-callback.js | 官方登录、state 校验和当前标签页会话 |
-| google-drive-client.js / google-drive-auth.js | Google 公开目录、原格式下载、最小权限登录和分段上传 |
-| data/catalog.js | 文件夹分享链接、地区和公开 Client ID |
-| assets/ | 网站标识、封面、小预览和演示素材 |
-| skills/README.md | 保留技能与来源清单 |
-| docs/ | 选型方案与使用背景 |
+## 本地验证
 
-收藏、本地连接草稿和目录备份不包含原文件或登录 token。与当前发布连接一致的本机草稿优先显示；发布连接更新后自动采用新配置，旧草稿保留在浏览器里。导入和恢复需要页面内确认。文件目录每次打开页面、手动刷新或完成上传时从所选云盘更新，不持续轮询。文件夹筛选按现有目录分组，收藏仅属于当前浏览器；未实现云端批量移动、改名和自定义标签。
+`node --test scripts/pcloud-client.test.cjs scripts/pcloud-auth.test.cjs scripts/google-drive.test.cjs scripts/openlist.test.cjs`
 
-测试：`node --test scripts/pcloud-client.test.cjs scripts/pcloud-auth.test.cjs scripts/google-drive.test.cjs` 检查登录、权限、链接解析和上传；启动预览后执行 `node scripts/smoke-test.cjs`，只读检查真实目录和本地服务，不上传文件。
+`$env:PORT=4182; node scripts/serve.cjs`
 
-实际验收范围见 docs/最小版验收.md。
+`$env:PREVIEW_URL='http://127.0.0.1:4182'; node scripts/smoke-test.cjs`
+
+本地预览服务器不接收上传；真实上传由云端授权并直传云盘。浏览器来源由后台 ALLOW_URLS 白名单决定，默认仅允许已发布网站。
