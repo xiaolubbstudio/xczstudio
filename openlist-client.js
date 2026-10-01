@@ -8,8 +8,16 @@
     if (!folderPath.startsWith('/') || folderPath.includes('\\') || /[\u0000-\u001f]/.test(folderPath) || folderPath.split('/').some(x => ['.', '..'].includes(x))) throw new Error('素材目录路径无效。');
     return { endpoint: url.origin, folderPath: folderPath.replace(/\/+$/, '') || '/' };
   }
+  const cooldowns = new Map();
+  function throttleError(seconds) {
+    const error = new Error('请求过于频繁，请 ' + seconds + ' 秒后再操作。');
+    error.code = 429; error.retryAfter = seconds; return error;
+  }
   async function request(input, route, body, session, signal) {
     const { endpoint } = config(input);
+    const key = endpoint + ':' + (session?.username || 'login');
+    const remaining = Math.ceil(((cooldowns.get(key) || 0) - Date.now()) / 1000);
+    if (remaining > 0) throw throttleError(remaining);
     const headers = { Accept: 'application/json' };
     if (session) {
       if (session.endpoint !== endpoint || !session.token || /[\u0000-\u0020]/.test(session.token)) throw new Error('请重新登录当前素材库。');
@@ -19,8 +27,17 @@
     const response = await root.fetch(endpoint + '/api/' + route, {
       method: body === undefined ? 'GET' : 'POST', headers,
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal, credentials: 'omit', cache: 'no-store', redirect: 'error'
+      signal, credentials: root.location?.origin === endpoint ? 'same-origin' : 'omit', cache: 'no-store', redirect: root.location?.origin === endpoint ? 'manual' : 'error'
     });
+    if (response.status === 429) {
+      const seconds = Math.min(86400, Math.max(1, Number(response.headers?.get('Retry-After')) || 60));
+      cooldowns.set(key, Date.now() + seconds * 1000);
+      throw throttleError(seconds);
+    }
+    if (response.type === 'opaqueredirect' || response.headers?.get('Content-Type')?.includes('text/html')) {
+      const error = new Error('入口验证已过期，请刷新页面重新验证。');
+      error.code = 'ACCESS_REQUIRED'; throw error;
+    }
     const data = await response.json();
     if (!response.ok || data.code !== 200) {
       // 不把服务端消息中的内部地址、凭据或堆栈回显到网页。

@@ -46,3 +46,9 @@ GitHub Pages 托管静态页面；独立 OpenList Worker 管理成员登录与�
 程序使用当前 Windows 用户的 `.cloud-backend/private/credentials.dpapi` 加密管理员记录，修改成功后同步更新此加密备份。账号信息不写入脚本或 Git；换电脑、换 Windows 用户无法直接解密。若网络在提交时中断，应先刷新成员列表核对，避免重复提交。修改后的账号密码用于下一次登录；已有登录状态不会立即被强制退出，网站标签页会话最长八小时。
 
 只读连接检查：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/manage-members.ps1 -CheckOnly`。
+
+## 入口保护接入进度
+
+已部署每成员每分钟 300 次 API 的共享计数、连续登录失败五次锁定十五分钟，以及前端收到 429 后的等待。网站已准备在素材库后台的 `/studio/` 同网址静态托管。**邮箱名单尚未提供，Cloudflare Access 与旧网址跳转尚未启用，目前不能宣称陌生请求已在 Worker 执行前被拦截。** 详见 [入口安全保护](docs/入口安全保护.md)。
+
+根目录 `素材库入口紧急控制.cmd` 用于 Access 应用建立后的关站、恢复；它只操作素材库专用策略。成员管理 CMD 的入口验证适配与最终切换将在名单确定后一起验收。

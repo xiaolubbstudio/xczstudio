@@ -66,3 +66,8 @@
 !/管理成员账号.cmd
 !/scripts/manage-members.ps1
 !/scripts/manage-members.test.ps1
+
+!/素材库入口紧急控制.cmd
+!/scripts/studio-emergency.ps1
+
+!/docs/入口安全保护.md

@@ -218,3 +218,30 @@ test('virtual folder upload rejects unsafe paths and failed server authorization
     assert.equal(requests.some(url => url.endsWith('/finish')), false);
   }
 });
+
+test('protected same-origin requests send Access cookies without following the login redirect', async () => {
+  let options;
+  const b = browser(async (_url, incoming) => { options = incoming; return response({ username:'member',role:0,permission:8 }); });
+  b.location = { origin:'https://library.example.test' };
+  await b.OpenListClient.request(input, 'me', undefined, { endpoint:'https://library.example.test',username:'member',token:'fixture' });
+  assert.equal(options.credentials,'same-origin');
+  assert.equal(options.redirect,'manual');
+});
+
+test('a rate-limit response pauses later calls for that member instead of retrying; another member stays usable', async () => {
+  let calls=0;
+  const b=browser(async ()=>{calls++;return {ok:false,status:429,headers:{get:()=> '90'}};});
+  const session={endpoint:'https://library.example.test',username:'member-one',token:'fixture'};
+  await assert.rejects(b.OpenListClient.request(input,'me',undefined,session),e=>e.code===429 && e.retryAfter===90);
+  await assert.rejects(b.OpenListClient.request(input,'fs/list',{},session),e=>e.code===429);
+  assert.equal(calls,1);
+  await assert.rejects(b.OpenListClient.request(input,'me',undefined,{...session,username:'member-two'}),e=>e.code===429);
+  assert.equal(calls,2);
+});
+
+test('expired Access session yields a recoverable validation message instead of parsing a login page', async () => {
+  for (const result of [{type:'opaqueredirect',status:0},{status:200,headers:{get:()=> 'text/html'}}]) {
+    const b=browser(async ()=>result);
+    await assert.rejects(b.OpenListClient.request(input,'me'),e=>e.code==='ACCESS_REQUIRED');
+  }
+});

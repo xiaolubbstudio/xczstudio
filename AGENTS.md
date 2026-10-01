@@ -23,3 +23,9 @@
 ## 同步范围
 
 网站文件：`index.html`、`auth.html`、`styles.css`、`app.js`、`pcloud-auth.js`、`auth-callback.js`、`pcloud-client.js`、`google-drive-client.js`、`google-drive-auth.js`、`motion.js`、`motion.css`、`.nojekyll`、`data/catalog.js`，以及 `assets` 中网站需要的图片与演示音效。开发说明和检查脚本可纳入仓库；skills 与原始技能包不纳入。
+
+## 已确认的入口安全接入
+
+用户已确认限定五个邮箱的 Cloudflare Access、同网址 `/studio/` 静态托管、每成员每分钟 300 次 API、连续失败五次锁十五分钟、素材库专用应急关闭入口。只针对 `xczstudio-openlist-trial`；禁止账号级 `all_workers` 保护或修改三个插件服务。具体进度见 `docs/入口安全保护.md`。截至 2026-10-02 尚缺五个邮箱，Access 与 GitHub 首页跳转尚未启用，不得宣称已实现 Worker 执行前的防刷。
+
+同源静态网站已在后台 `/studio/` 打包。修改网站后还要在独立后台仓库执行 `npm run deploy`，其隔离检查和白名单打包脚本将更新同网址的静态文件；仍需推送网站与后台各自仓库。入口保护启用前，必须先适配并验收本地成员管理 CMD 的 Access 邮箱验证，不为该工具添加公开绕过路径。邮箱名单、Cloudflare OAuth 令牌、入口访问会话一律不写公开仓库。
