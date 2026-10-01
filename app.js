@@ -28,9 +28,10 @@
   let memberRequest = null;
   let cloudFolderName = '';
   const isGoogle = () => catalog.config.provider === 'google';
-  const cloudName = () => isGoogle() ? 'Google Drive' : 'pCloud';
-  const cloudClient = () => isGoogle() ? window.GoogleDriveClient : window.PCloudClient;
-  const cloudAuth = () => isGoogle() ? window.GoogleDriveAuth : window.PCloudAuth;
+  const isOpenList = () => catalog.config.provider === 'openlist';
+  const cloudName = () => isOpenList() ? '素材库后台' : isGoogle() ? 'Google Drive' : 'pCloud';
+  const cloudClient = () => isOpenList() ? window.OpenListClient : isGoogle() ? window.GoogleDriveClient : window.PCloudClient;
+  const cloudAuth = () => isOpenList() ? window.OpenListAuth : isGoogle() ? window.GoogleDriveAuth : window.PCloudAuth;
   const memberSession = () => cloudAuth().get(catalog.config);
   const memberSettings = () => ({ ...catalog.config, folderId: cloudFolderId });
   const isCloud = () => Boolean(catalog.config.folderUrl);
@@ -85,19 +86,24 @@
     else image.removeAttribute('src');
     $('#member-avatar').setAttribute('aria-label', member ? `${member.name} · ${cloudName()} 账号` : `我的 ${cloudName()} 账号`);
     image.alt = `${cloudName()} 头像`;
-    $('#member-login-button').textContent = signedIn ? '我的账号' : `登录 ${isGoogle() ? 'Google' : 'pCloud'}`;
+    $('#member-login-button').textContent = signedIn ? '我的账号' : isOpenList() ? '成员登录' : `登录 ${isGoogle() ? 'Google' : 'pCloud'}`;
+    $('#openlist-login-form').hidden = !isOpenList() || signedIn;
     $('#member-status').textContent = message || (memberBusy ? '核实上传权限中…' : signedIn && !member?.canUpload ? isGoogle() ? '请授权素材文件夹并核实编辑权限' : '此账号尚未获得素材文件夹上传权限' : '');
     $('#member-info').textContent = member ? `${member.name} · ${member.canUpload ? '已获得上传权限' : '尚未获得上传权限'}` : signedIn ? '请核实素材文件夹授权和成员权限。' : `请使用受邀的 ${isGoogle() ? 'Google' : 'pCloud'} 账号登录。`;
-    $('#member-authorize').hidden = signedIn;
+    $('#member-authorize').hidden = signedIn || isOpenList();
     $('#member-authorize').disabled = !catalog.config.clientId;
     $('#member-authorize').textContent = `登录 ${isGoogle() ? 'Google' : 'pCloud'}`;
     $('#member-folder-authorize').hidden = !isGoogle() || !signedIn || member?.canUpload === true;
     $('#member-folder-authorize').disabled = memberBusy;
-    $('#member-permission-help').textContent = isGoogle() ? '首次登录后，在 Google 文件夹选择器中选择素材文件夹。只授权所选文件夹；上传权限由 Drive 共享设置校验。' : '应用可获所有文件夹权限；本站只操作素材文件夹。';
+    $('#member-permission-help').textContent = isOpenList() ? '使用管理员为你创建的独立账号。上传仍在验收中。' : isGoogle() ? '首次登录后，在 Google 文件夹选择器中选择素材文件夹。只授权所选文件夹；上传权限由 Drive 共享设置校验。' : '应用可获所有文件夹权限；本站只操作素材文件夹。';
     $('#member-logout').hidden = !signedIn;
     $('#member-recheck').hidden = !signedIn;
     $('#member-recheck').disabled = memberBusy;
-    $('#member-login-message').textContent = catalog.config.clientId ? '' : `管理员正在配置 ${cloudName()} 登录。`;
+    $('#member-login-message').textContent = isOpenList() ? '' : catalog.config.clientId ? '' : `管理员正在配置 ${cloudName()} 登录。`;
+    if (isOpenList()) {
+      $('#member-info').textContent = member ? `${member.name} · 已登录` : signedIn ? '正在核实账号…' : '请使用你的素材库成员账号。';
+      $('#member-status').textContent = message || (memberBusy ? '核实账号中…' : signedIn ? '云端上传尚未完成验收' : '');
+    }
     $('#upload-button').textContent = '↑ 上传素材';
   }
 
@@ -163,15 +169,27 @@
     openMember();
     if (message) $('#member-login-message').textContent = message;
   });
+  $('#openlist-login-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = $('#openlist-login-submit');
+    button.disabled = true;
+    try {
+      await window.OpenListAuth.begin(catalog.config, $('#openlist-username').value, $('#openlist-password').value, $('#openlist-otp').value);
+      await refreshCloud();
+    } catch (error) { $('#member-login-message').textContent = error.message; }
+    finally { $('#openlist-password').value = ''; $('#openlist-otp').value = ''; button.disabled = false; }
+  });
   $('#member-recheck').addEventListener('click', refreshMember);
-  $('#member-logout').addEventListener('click', () => {
+  $('#member-logout').addEventListener('click', async () => {
     uploadRequest?.abort();
     memberRequest?.abort(); memberRequest = null;
-    cloudAuth().logout();
+    let logoutError = '';
+    try { await cloudAuth().logout(catalog.config); } catch (error) { logoutError = error.message; }
+    if (isOpenList()) { cloudRequest?.abort(); cloudAssets = []; cloudFolderId = null; render(); cloudStatus('请登录素材库。'); }
     member = null; memberBusy = false;
     renderMember();
     window.StudioMotion.close($('#member-dialog'));
-    toast('已退出登录');
+    toast(logoutError || '已退出登录');
   });
 
   function renderQueue() {
@@ -284,14 +302,14 @@
   function validateCatalog(input) {
     if (!input || input.version !== 1 || !Array.isArray(input.assets) || input.assets.length > 5000) throw new Error('请选择 version 为 1 的目录 JSON，素材数量不能超过 5000。');
     const provider = input.config?.provider || 'pcloud';
-    if (!['pcloud', 'google'].includes(provider)) throw new Error('请选择 Google Drive 或 pCloud。');
+    if (!['pcloud', 'google', 'openlist'].includes(provider)) throw new Error('素材托管平台无效。');
     const clientId = String(input.config?.clientId || '').trim();
     const folderUrl = String(input.config?.folderUrl || '').trim();
     const region = input.config?.region || 'us';
     const apiKey = String(input.config?.apiKey || '').trim();
     const projectNumber = String(input.config?.projectNumber || '').trim();
-    const config = provider === 'google' ? { provider, clientId, folderUrl, apiKey, projectNumber } : { provider, clientId, folderUrl, region };
-    (provider === 'google' ? window.GoogleDriveClient : window.PCloudClient).config(config);
+    const config = provider === 'openlist' ? { provider, folderUrl, folderPath: String(input.config?.folderPath || '/') } : provider === 'google' ? { provider, clientId, folderUrl, apiKey, projectNumber } : { provider, clientId, folderUrl, region };
+    (provider === 'openlist' ? window.OpenListClient : provider === 'google' ? window.GoogleDriveClient : window.PCloudClient).config(config);
     const ids = new Set();
     const assets = input.assets.map((asset) => {
       if (!asset || typeof asset.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(asset.id) || ids.has(asset.id)) throw new Error('素材 ID 无效或重复。');
@@ -412,11 +430,12 @@
     titleRow.append(title, favorite);
     const bottom = element('div', 'card-bottom');
     bottom.append(element('span', '', `${asset.member || '未署名'} · ${asset.date.slice(5).replace('-', '/')}`), element('span', asset.demo ? 'demo-tag' : '', fileSize(asset)));
-    const download = element('a', 'card-download', asset.provider === 'google' || asset.demo ? '↓ 下载' : '↓ ZIP');
+    const download = element('a', 'card-download', asset.provider === 'google' || asset.provider === 'openlist' || asset.demo ? '↓ 下载' : '↓ ZIP');
     download.href = asset.cloud ? cloudClient().downloadUrl(catalog.config, asset) : safeUrl(asset.sourceUrl);
-    download.setAttribute('aria-label', `下载 ${asset.name}${asset.cloud && asset.provider !== 'google' ? '（ZIP）' : ''}`);
+    download.setAttribute('aria-label', `下载 ${asset.name}${asset.cloud && asset.provider === 'pcloud' ? '（ZIP）' : ''}`);
     if (asset.demo) download.download = asset.sourceUrl.split('/').pop();
     if (asset.provider === 'google') { download.target = '_blank'; download.rel = 'noopener noreferrer'; }
+    if (asset.provider === 'openlist') download.addEventListener('click', event => downloadOpenList(event, asset));
     bottom.append(download);
     content.append(titleRow);
     const folder = element('button', 'folder-chip', asset.tags.length ? asset.tags.join(' / ') : '根目录');
@@ -489,7 +508,22 @@
     $('#detail-favorite').setAttribute('aria-pressed', String(favorites.has(activeAsset.id)));
   }
 
-  function openDetail(asset) {
+  async function downloadOpenList(event, asset) {
+    event.preventDefault();
+    const link = event.currentTarget;
+    if (link.dataset.busy) return;
+    link.dataset.busy = '1';
+    const input = { ...catalog.config };
+    const session = memberSession();
+    try {
+      const url = await window.OpenListClient.resolve(input, asset, AbortSignal.timeout(20000));
+      if (catalog.config.provider !== 'openlist' || memberSession()?.token !== session?.token) return;
+      const anchor = element('a'); anchor.href = url; anchor.download = asset.name; anchor.rel = 'noreferrer'; document.body.append(anchor); anchor.click(); anchor.remove();
+    } catch (error) { toast(error.message); }
+    finally { delete link.dataset.busy; }
+  }
+
+  async function openDetail(asset) {
     activeAsset = asset;
     $('#detail-type').textContent = `${TYPES[asset.type]}${asset.demo ? ' / 项目演示' : ` / ${cloudName()} 原文件`}`;
     $('#detail-name').textContent = asset.name;
@@ -498,7 +532,19 @@
     $('#detail-meta').replaceChildren(element('span', '', `上传成员：${asset.member || '未署名'}`), element('span', '', `添加日期：${asset.date}`), element('span', '', fileSize(asset)));
     const preview = $('#detail-preview');
     preview.replaceChildren();
-    const url = safeUrl(asset.detailPreviewUrl || asset.previewUrl);
+    let url = safeUrl(asset.detailPreviewUrl || asset.previewUrl);
+    if (asset.provider === 'openlist') {
+      preview.append(fallback(asset.type, '正在读取预览…'));
+      $('#detail-download').hidden = true;
+      $('#detail-source').hidden = true;
+      $('#detail-note').textContent = '';
+      updateDetailFavorite();
+      window.StudioMotion.open($('#detail-dialog'));
+      try { url = await window.OpenListClient.resolve(catalog.config, asset, AbortSignal.timeout(20000)); }
+      catch (error) { if (activeAsset === asset) toast(error.message); }
+      if (activeAsset !== asset) return;
+      preview.replaceChildren();
+    }
     if (asset.provider === 'google') {
       const frame = element('iframe', 'drive-preview');
       frame.src = asset.embedUrl;
@@ -506,10 +552,10 @@
       frame.allow = 'fullscreen';
       frame.referrerPolicy = 'strict-origin-when-cross-origin';
       preview.append(frame);
-    } else if (!url) preview.append(fallback(asset.type, '在 pCloud 预览'));
+    } else if (!url) preview.append(fallback(asset.type, asset.provider === 'openlist' ? '暂无预览' : '在 pCloud 预览'));
     else {
-      const audio = !asset.cloud && asset.type === 'audio';
-      const video = !asset.cloud && /\.(mp4|webm)(?:[?#]|$)/i.test(url);
+      const audio = (!asset.cloud || asset.provider === 'openlist') && asset.type === 'audio';
+      const video = (!asset.cloud && /\.(mp4|webm)(?:[?#]|$)/i.test(url)) || asset.provider === 'openlist' && asset.type === 'video';
       const media = element(audio ? 'audio' : video ? 'video' : 'img');
       if (audio || video) { media.controls = true; media.preload = 'metadata'; media.setAttribute('playsinline', ''); }
       else media.alt = asset.name;
@@ -518,19 +564,20 @@
       preview.append(media);
     }
     const download = $('#detail-download');
+    download.hidden = false;
     download.href = asset.cloud ? cloudClient().downloadUrl(catalog.config, asset) : safeUrl(asset.sourceUrl);
-    download.textContent = asset.demo ? '↓ 下载演示文件' : asset.provider === 'google' ? '↓ 下载原文件' : asset.cloud ? '↓ 下载 ZIP' : '↗ 在 pCloud 获取原文件';
+    download.textContent = asset.demo ? '↓ 下载演示文件' : ['google', 'openlist'].includes(asset.provider) ? '↓ 下载原文件' : asset.cloud ? '↓ 下载 ZIP' : '↗ 在 pCloud 获取原文件';
     if (asset.demo || asset.cloud && asset.provider !== 'google') download.removeAttribute('target'); else download.target = '_blank';
     const source = $('#detail-source');
-    source.hidden = !asset.cloud;
+    source.hidden = !asset.cloud || asset.provider === 'openlist';
     source.href = safeUrl(asset.sourceUrl);
     source.textContent = asset.provider === 'google' ? '↗ 在 Drive 预览' : '↗ pCloud 预览';
-    download.onclick = asset.cloud ? () => toast(asset.provider === 'google' ? '已发起原文件下载' : '已发起 ZIP 下载') : null;
+    download.onclick = asset.provider === 'openlist' ? event => downloadOpenList(event, asset) : asset.cloud ? () => toast(asset.provider === 'google' ? '已发起原文件下载' : '已发起 ZIP 下载') : null;
     if (asset.demo) download.setAttribute('download', asset.sourceUrl.split('/').pop());
     else download.removeAttribute('download');
-    $('#detail-note').textContent = asset.demo ? '项目演示文件。' : asset.provider === 'google' ? '下载保留原格式。Google 可能要求确认；预览失败可在 Drive 打开。' : asset.cloud ? 'ZIP 内为原文件，下载后解压。' : '';
+    $('#detail-note').textContent = asset.provider === 'openlist' ? (asset.type === 'video' ? '仅支持当前浏览器可解码的视频；MOV 等文件仍可下载原件。' : '') : asset.demo ? '项目演示文件。' : asset.provider === 'google' ? '下载保留原格式。Google 可能要求确认；预览失败可在 Drive 打开。' : asset.cloud ? 'ZIP 内为原文件，下载后解压。' : '';
     updateDetailFavorite();
-    window.StudioMotion.open($('#detail-dialog'));
+    if (!$('#detail-dialog').open) window.StudioMotion.open($('#detail-dialog'));
     $('#detail-dialog').scrollTop = 0;
   }
 
@@ -544,14 +591,18 @@
 
   function updateProviderFields() {
     const google = $('#storage-provider').value === 'google';
-    $('#pcloud-fields').hidden = google;
+    const openlist = $('#storage-provider').value === 'openlist';
+    $('#openlist-fields').hidden = !openlist;
+    $('#folder-url-label').textContent = openlist ? '云端后台网址' : '文件夹分享链接';
+    $('#pcloud-fields').hidden = google || openlist;
     $('#google-fields').hidden = !google;
-    $('#folder-url').placeholder = google ? 'https://drive.google.com/drive/folders/…' : '粘贴 pCloud 文件夹分享链接';
-    $('#connection-provider-help').textContent = google ? '文件夹公开权限设为查看者；指定成员单独设为编辑者。API Key 必须限制为本网站和 Drive／Picker API。' : '在 pCloud 邀请成员并授予上传权限。旧的匿名上传入口需在 pCloud 停用。';
+    $('#folder-url').placeholder = openlist ? 'https://你的后台.workers.dev/' : google ? 'https://drive.google.com/drive/folders/…' : '粘贴 pCloud 文件夹分享链接';
+    $('#connection-provider-help').textContent = openlist ? '管理员在云端创建五个独立成员账号；不要在这里填写密码或云盘令牌。此连接尚未完成上传验收。' : google ? '文件夹公开权限设为查看者；指定成员单独设为编辑者。API Key 必须限制为本网站和 Drive／Picker API。' : '在 pCloud 邀请成员并授予上传权限。旧的匿名上传入口需在 pCloud 停用。';
   }
   function fillSettings() {
     $('#storage-provider').value = catalog.config.provider || 'pcloud';
     $('#folder-url').value = catalog.config.folderUrl;
+    $('#openlist-folder-path').value = catalog.config.folderPath || '/';
     $('#pcloud-client-id').value = isGoogle() ? '' : catalog.config.clientId;
     $('#cloud-region').value = catalog.config.region || 'us';
     $('#google-client-id').value = isGoogle() ? catalog.config.clientId : '';
@@ -596,6 +647,7 @@
   document.querySelectorAll('dialog').forEach((dialog) => {
     dialog.addEventListener('close', () => {
       dialog.querySelectorAll('audio,video').forEach((media) => { media.pause(); media.removeAttribute('src'); media.load(); });
+      if (dialog.id === 'member-dialog') { $('#openlist-password').value = ''; $('#openlist-otp').value = ''; }
       if (dialog.id === 'detail-dialog') { activeAsset = null; $('#detail-preview').replaceChildren(); }
     });
   });
@@ -610,8 +662,8 @@
     try {
       if (uploading) throw new Error('请先完成或停止上传，再更改素材库连接。');
       const google = $('#storage-provider').value === 'google';
-      const next = google ? { provider: 'google', clientId: $('#google-client-id').value.trim(), folderUrl: $('#folder-url').value.trim(), apiKey: $('#google-api-key').value.trim(), projectNumber: $('#google-project-number').value.trim() } : { provider: 'pcloud', clientId: $('#pcloud-client-id').value.trim(), folderUrl: $('#folder-url').value.trim(), region: $('#cloud-region').value };
-      (google ? window.GoogleDriveClient : window.PCloudClient).config(next);
+      const next = $('#storage-provider').value === 'openlist' ? { provider: 'openlist', folderUrl: $('#folder-url').value.trim(), folderPath: $('#openlist-folder-path').value.trim() || '/' } : google ? { provider: 'google', clientId: $('#google-client-id').value.trim(), folderUrl: $('#folder-url').value.trim(), apiKey: $('#google-api-key').value.trim(), projectNumber: $('#google-project-number').value.trim() } : { provider: 'pcloud', clientId: $('#pcloud-client-id').value.trim(), folderUrl: $('#folder-url').value.trim(), region: $('#cloud-region').value };
+      (next.provider === 'openlist' ? window.OpenListClient : google ? window.GoogleDriveClient : window.PCloudClient).config(next);
       if (next.clientId && !next.folderUrl) throw new Error('请同时填写素材文件夹分享链接。');
       if (google && (!next.folderUrl || !next.apiKey)) throw new Error('请填写 Google 文件夹分享链接和 API Key。OAuth Client ID、项目编号用于成员上传，可稍后填写。');
       cloudAssets = [];

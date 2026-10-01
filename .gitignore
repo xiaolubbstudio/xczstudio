@@ -40,3 +40,8 @@
 !/motion.js
 !/motion.css
 !/assets/studio-face.png
+
+!/openlist-client.js
+!/openlist-auth.js
+!/scripts/openlist.test.cjs
+!/docs/OpenList云端接入.md
