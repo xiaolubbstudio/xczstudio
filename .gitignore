@@ -62,3 +62,7 @@
 
 
 !/dock.css
+
+!/管理成员账号.cmd
+!/scripts/manage-members.ps1
+!/scripts/manage-members.test.ps1

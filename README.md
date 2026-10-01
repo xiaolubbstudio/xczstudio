@@ -38,3 +38,11 @@ GitHub Pages 托管静态页面；独立 OpenList Worker 管理成员登录与�
 `$env:PREVIEW_URL='http://127.0.0.1:4182'; node scripts/smoke-test.cjs`
 
 本地预览服务器不接收上传；真实上传由云端授权并直传云盘。浏览器来源由后台 ALLOW_URLS 白名单决定，默认仅允许已发布网站。
+
+## 本地成员账号管理
+
+双击项目根目录的 `管理成员账号.cmd`，选择成员编号，填写新用户名和新密码，再输入 Y 提交。用户名或密码留空时保留原值；密码需重复输入，不显示在窗口中。提交直接更新独立素材库后台，无需重新部署网站，不修改成员权限、素材或插件授权服务。
+
+程序使用当前 Windows 用户的 `.cloud-backend/private/credentials.dpapi` 加密管理员记录，修改成功后同步更新此加密备份。账号信息不写入脚本或 Git；换电脑、换 Windows 用户无法直接解密。若网络在提交时中断，应先刷新成员列表核对，避免重复提交。修改后的账号密码用于下一次登录；已有登录状态不会立即被强制退出，网站标签页会话最长八小时。
+
+只读连接检查：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/manage-members.ps1 -CheckOnly`。
