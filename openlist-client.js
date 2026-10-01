@@ -59,12 +59,14 @@
     const settings = config(input), session = sessionFor(input);
     if (!session) { const error = new Error('请先登录素材库。'); error.code = 401; throw error; }
     const assets = [], queue = [{ path: settings.folderPath, label: '' }], seen = new Set();
+    let access;
     while (queue.length) {
       const folder = queue.shift();
       if (seen.has(folder.path)) continue;
       if (seen.size >= 100) throw new Error('子目录过多，请缩小素材目录范围。');
       seen.add(folder.path);
       const data = await directory(input, folder.path, session, signal);
+      if (folder.path === settings.folderPath) access = { canUpload: false, hasWritePermission: data.write === true, uploadPending: true };
       for (const file of data.content) {
         if (typeof file.name !== 'string' || !file.name || /[\\/\u0000-\u001f]/.test(file.name) || ['.', '..'].includes(file.name)) throw new Error('云端返回了无效文件名。');
         const path = join(folder.path, file.name);
@@ -74,7 +76,7 @@
         assets.push({ id: 'ol-' + path, path, name: file.name, type: assetType, folder: folder.label.replace(/^\//, '') || '根目录', tags: folder.label.split('/').filter(Boolean), description: '', member: '', date: String(file.modified || '').slice(0, 10), modified: String(file.modified || ''), sizeMB: Number(file.size) / 1048576, cloud: true, provider: 'openlist', previewUrl: mediaUrl(file.thumb, input), sourceUrl: '' });
       }
     }
-    return { assets, folderId: settings.folderPath, name: '素材库' };
+    return { assets, folderId: settings.folderPath, name: '素材库', access };
   }
   async function profile(input, session, signal) {
     const user = await request(input, 'me', undefined, session, signal);

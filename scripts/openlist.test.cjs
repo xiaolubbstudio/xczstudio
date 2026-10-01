@@ -79,9 +79,11 @@ test('signed original links support media and reject credential leaks and direct
 });
 
 test('directory traversal keeps nested originals and does not expose unverified upload', async () => {
+  let directoryRequests = 0;
   const b = browser(async (url, options) => {
     if (url.endsWith('/login')) return response({ token: 'fixture' });
     if (url.endsWith('/me')) return response({ username: 'member', role: 0, permission: 8 });
+    directoryRequests++;
     const body = JSON.parse(options.body);
     return response({ write: true, total: 1, content: body.path === '/' ? [{ name: '动画', is_dir: true }] : [{ name: '素材.mov', size: 300 * 1048576, modified: '2026-10-01', thumb: '' }] });
   });
@@ -91,6 +93,10 @@ test('directory traversal keeps nested originals and does not expose unverified 
   assert.equal(data.assets[0].path, '/动画/素材.mov');
   assert.equal(data.assets[0].type, 'video');
   assert.equal(data.assets[0].sizeMB, 300);
+  assert.equal(directoryRequests, 2); // 根目录与一个子目录，不重复核实根目录。
+  assert.equal(data.access.hasWritePermission, true);
+  assert.equal(data.access.canUpload, false);
+  assert.equal(data.access.uploadPending, true);
   assert.equal((await b.OpenListClient.memberAccess(input, b.OpenListAuth.get(input))).canUpload, false);
   await assert.rejects(b.OpenListClient.upload());
 });

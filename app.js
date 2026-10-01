@@ -44,6 +44,59 @@
   const isCloud = () => Boolean(catalog.config.folderUrl);
   const allAssets = () => isCloud() ? cloudAssets : catalog.assets;
 
+  // 卡片只读目录已有的缩略图地址，不解析原文件；跨筛选复用进行中的加载。
+  let thumbnailObserver = null;
+  let thumbnailScope = '';
+  let thumbnailController = new AbortController();
+  const thumbnails = new Map();
+  function previewKey(input, session, asset, part) {
+    return [input.provider || 'pcloud', input.folderUrl || '', input.folderPath || '/', session?.username || session?.uid || 'public', asset.id, asset.modified || asset.date, asset.sizeMB, part, 'original-v1'];
+  }
+  function clearThumbnails() {
+    thumbnailObserver?.disconnect(); thumbnailObserver = null;
+    thumbnailController.abort(); thumbnailController = new AbortController();
+    for (const item of thumbnails.values()) if (item.url) URL.revokeObjectURL(item.url);
+    thumbnails.clear(); thumbnailScope = '';
+  }
+  function observeThumbnails() {
+    thumbnailObserver?.disconnect();
+    const input = { ...catalog.config }, session = memberSession();
+    const scope = JSON.stringify([input.provider, input.folderUrl, input.folderPath, session?.username || session?.uid || 'public', session?.created]);
+    if (scope !== thumbnailScope) { clearThumbnails(); thumbnailScope = scope; }
+    const signal = thumbnailController.signal;
+    const assets = new Map(allAssets().map(asset => [asset.id, asset]));
+    const valid = new Set([...assets.values()].map(asset => JSON.stringify(previewKey(input, session, asset, asset.type === 'video' ? 'poster' : 'thumbnail'))));
+    for (const [id, item] of thumbnails) if (!valid.has(id)) { if (item.url) URL.revokeObjectURL(item.url); thumbnails.delete(id); }
+    async function show(button) {
+      const asset = assets.get(button.closest('.asset-card').dataset.id);
+      if (!asset || !asset.previewUrl || asset.type === 'audio' || asset.type === 'other' || (asset.provider === 'openlist' && !session)) return;
+      // 演示视频的 previewUrl 可能是视频本身，不能作为自动缩略图加载。
+      if (!asset.cloud && !['image', 'animation'].includes(asset.type)) return;
+      const parts = previewKey(input, session, asset, asset.type === 'video' ? 'poster' : 'thumbnail');
+      const id = JSON.stringify(parts);
+      let item = thumbnails.get(id);
+      if (!item) {
+        item = {}; thumbnails.set(id, item);
+        item.promise = window.StudioPreviewCache.load(parts, () => safeUrl(asset.previewUrl), { signal, kind: 'image', limit: 1048576 })
+          .then(result => { if (signal.aborted || thumbnails.get(id) !== item) return ''; item.url = URL.createObjectURL(result.blob); return item.url; })
+          .catch(() => '');
+      }
+      const url = await item.promise;
+      if (!url || signal.aborted || !button.isConnected) return;
+      const image = element('img'); image.src = url; image.alt = asset.name; image.decoding = 'async';
+      image.addEventListener('error', () => image.remove(), { once: true });
+      button.querySelector('.preview-fallback')?.remove();
+      button.prepend(image);
+    }
+    const buttons = $('#asset-grid').querySelectorAll('.preview-button');
+    if ('IntersectionObserver' in window) {
+      thumbnailObserver = new IntersectionObserver(entries => {
+        for (const entry of entries) if (entry.isIntersecting) { thumbnailObserver.unobserve(entry.target); show(entry.target); }
+      }, { rootMargin: '120px' });
+      buttons.forEach(button => thumbnailObserver.observe(button));
+    } else buttons.forEach(show);
+  }
+
   function cloudStatus(message, error = false) {
     $('#cloud-status').textContent = message;
     $('#cloud-status').classList.toggle('error', error);
@@ -65,6 +118,7 @@
     render();
     const timeout = setTimeout(() => controller.abort(), isGoogle() ? 60000 : 20000);
     try {
+      const listSession = memberSession();
       const data = await cloudClient().list(catalog.config, controller.signal);
       if (cloudRequest !== controller) return;
       cloudAssets = data.assets;
@@ -72,7 +126,7 @@
       cloudFolderName = data.name;
       cloudStatus(`${data.name} · ${data.assets.length} 份素材`);
       if (notify) toast('素材已更新');
-      await refreshMember();
+      await refreshMember(isOpenList() && memberSession()?.token === listSession?.token ? data.access : undefined);
     } catch (error) {
       if (cloudRequest !== controller) return;
       cloudStatus(`目录未能更新：${controller.signal.aborted ? '连接超时，请重试。' : error.message}`, true);
@@ -114,7 +168,7 @@
     $('#upload-button').textContent = '↑ 上传素材';
   }
 
-  async function refreshMember() {
+  async function refreshMember(directoryAccess) {
     memberRequest?.abort();
     const session = memberSession();
     member = null;
@@ -130,7 +184,7 @@
       const profile = await client.profile(input, session, controller.signal);
       if (memberRequest !== controller) return;
       member = { ...profile, canUpload: false };
-      const access = await client.memberAccess(input, session, controller.signal);
+      const access = isOpenList() && directoryAccess ? directoryAccess : await client.memberAccess(input, session, controller.signal);
       if (memberRequest !== controller) return;
       member = { ...profile, ...access };
       memberBusy = false;
@@ -186,8 +240,9 @@
     } catch (error) { $('#member-login-message').textContent = error.message; }
     finally { $('#openlist-password').value = ''; $('#openlist-otp').value = ''; button.disabled = false; }
   });
-  $('#member-recheck').addEventListener('click', refreshMember);
+  $('#member-recheck').addEventListener('click', () => refreshMember());
   $('#member-logout').addEventListener('click', async () => {
+    clearThumbnails();
     stopPreview(); activeAsset = null; $('#detail-preview').replaceChildren();
     uploadRequest?.abort();
     memberRequest?.abort(); memberRequest = null;
@@ -416,7 +471,7 @@
     card.dataset.id = asset.id;
     const preview = element('button', 'preview-button');
     preview.setAttribute('aria-label', `预览 ${asset.name}`);
-    // 列表只显示图标；滚动、筛选、收藏都不会请求素材或缩略图。
+    // 先显示占位图，进入可见区域后读取小型缩略图；视频不自动播放。
     if (asset.type === 'audio') preview.append(audioArt());
     else preview.append(fallback(asset.type, '点击预览'));
     const ext = asset.name.split('.').pop();
@@ -481,6 +536,7 @@
     });
     $('#asset-grid').classList.toggle('list-view', activeView === 'list');
     window.StudioMotion.grid($('#asset-grid'), visible.map(cardFor));
+    observeThumbnails();
     $('#empty-state').hidden = visible.length > 0 || cloudBusy;
     $('#library-title').textContent = TITLES[activeType];
     const demoCount = visible.filter((asset) => asset.demo).length;
@@ -555,10 +611,9 @@
     window.StudioMotion.open($('#detail-dialog'));
     $('#detail-dialog').scrollTop = 0;
     const current = () => !controller.signal.aborted && activeAsset === asset && catalog.config.folderUrl === input.folderUrl && catalog.config.provider === input.provider && (!isOpenList() || memberSession()?.token === session?.token);
-    const scope = [input.provider || 'pcloud', input.folderUrl || '', input.folderPath || '/', session?.username || session?.uid || 'public'];
     async function loadPart(part, resolveUrl, kind, limit, onProgress) {
       if (asset.provider === 'openlist' && !session) throw new Error('请先登录素材库');
-      const result = await window.StudioPreviewCache.load([...scope, asset.id, asset.modified || asset.date, asset.sizeMB, part, 'original-v1'], resolveUrl, { signal: controller.signal, kind, limit, onProgress });
+      const result = await window.StudioPreviewCache.load(previewKey(input, session, asset, part), resolveUrl, { signal: controller.signal, kind, limit, onProgress });
       if (!current()) return null;
       const url = URL.createObjectURL(result.blob); previewObjectUrls.push(url);
       $('#detail-note').textContent = result.cached ? '本机缓存' : result.persistent ? '预览已缓存到本机' : '预览仅缓存于本次页面';
