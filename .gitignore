@@ -6,6 +6,7 @@
 !/README.md
 !/index.html
 !/styles.css
+!/workspace.css
 !/app.js
 !/preview-cache.js
 !/pcloud-client.js
@@ -41,6 +42,8 @@
 !/motion.js
 !/motion.css
 !/assets/studio-face.png
+!/assets/ui-icons.svg
+!/assets/Phosphor-LICENSE.txt
 
 !/openlist-client.js
 !/openlist-auth.js

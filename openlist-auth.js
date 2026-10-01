@@ -35,7 +35,17 @@
       catch { throw new Error('本机已退出；后台注销未确认，请关闭此标签页。'); }
     }
   }
-  const api = { validSession, get, begin, logout };
+  // 仅保存用户名，密码交给浏览器密码管理器；登录令牌仍只在 sessionStorage。
+  const accountKey = input => 'studio-openlist-account:' + JSON.stringify(config(input));
+  function remembered(input) {
+    try { const value = root.localStorage.getItem(accountKey(input)); return typeof value === 'string' && value.length <= 100 ? value : ''; }
+    catch { return ''; }
+  }
+  function remember(input, username) {
+    try { if (username?.trim()) root.localStorage.setItem(accountKey(input), username.trim().slice(0,100)); else root.localStorage.removeItem(accountKey(input)); }
+    catch { /* 保存用户名失败不影响登录。 */ }
+  }
+  const api = { validSession, get, begin, logout, remembered, remember };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.OpenListAuth = api;
 })(typeof window === 'undefined' ? globalThis : window);

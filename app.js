@@ -14,6 +14,7 @@
   let activeType = 'all';
   let activeView = 'grid';
   let activeAsset = null;
+  let filteredAssets = [];
   let previewRequest = null;
   let previewObjectUrls = [];
   function stopPreview() {
@@ -165,7 +166,7 @@
       $('#member-info').textContent = member ? `${member.name} · 已登录` : signedIn ? '正在核实账号…' : '请使用你的素材库成员账号。';
       $('#member-status').textContent = message || (memberBusy ? '核实账号中…' : signedIn ? '云端上传尚未完成验收' : '');
     }
-    $('#upload-button').textContent = '↑ 上传素材';
+    $('#upload-button').replaceChildren(icon('arrow-up'), document.createTextNode('上传素材'));
   }
 
   async function refreshMember(directoryAccess) {
@@ -202,6 +203,11 @@
 
   function openMember() {
     renderMember();
+    if (isOpenList() && !$('#openlist-username').value) {
+      const remembered = window.OpenListAuth.remembered(catalog.config);
+      $('#openlist-username').value = remembered;
+      $('#openlist-remember').checked = Boolean(remembered);
+    }
     window.StudioMotion.open($('#member-dialog'));
   }
 
@@ -236,9 +242,17 @@
     button.disabled = true;
     try {
       await window.OpenListAuth.begin(catalog.config, $('#openlist-username').value, $('#openlist-password').value, $('#openlist-otp').value);
+      window.OpenListAuth.remember(catalog.config, $('#openlist-remember').checked ? $('#openlist-username').value : '');
       await refreshCloud();
     } catch (error) { $('#member-login-message').textContent = error.message; }
-    finally { $('#openlist-password').value = ''; $('#openlist-otp').value = ''; button.disabled = false; }
+    finally { $('#openlist-password').value = ''; $('#openlist-password').type = 'password'; $('#password-toggle').setAttribute('aria-pressed','false'); $('#password-toggle').setAttribute('aria-label','显示密码'); $('#password-toggle').replaceChildren(icon('eye')); $('#openlist-otp').value = ''; button.disabled = false; }
+  });
+  $('#password-toggle').addEventListener('click', () => {
+    const input = $('#openlist-password'), shown = input.type === 'password';
+    input.type = shown ? 'text' : 'password';
+    $('#password-toggle').setAttribute('aria-pressed', String(shown));
+    $('#password-toggle').setAttribute('aria-label', shown ? '隐藏密码' : '显示密码');
+    $('#password-toggle').replaceChildren(icon(shown ? 'eye-slash' : 'eye'));
   });
   $('#member-recheck').addEventListener('click', () => refreshMember());
   $('#member-logout').addEventListener('click', async () => {
@@ -336,6 +350,22 @@
     if (className) node.className = className;
     if (text !== undefined) node.textContent = text;
     return node;
+  }
+
+  function icon(name) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.classList.add('icon'); svg.setAttribute('aria-hidden','true');
+    const use = document.createElementNS('http://www.w3.org/2000/svg','use');
+    use.setAttribute('href', `assets/ui-icons.svg#${name}`); svg.append(use);
+    return svg;
+  }
+  function decorateChrome() {
+    const types = { all:'squares-four', image:'image', video:'film-strip', audio:'music-notes', animation:'sparkle', other:'file', favorites:'heart' };
+    document.querySelectorAll('[data-type]').forEach(button => button.querySelector('span').replaceChildren(icon(types[button.dataset.type])));
+    document.querySelectorAll('[data-icon]').forEach(node => node.replaceChildren(icon(node.dataset.icon)));
+    $('.search > span').replaceChildren(icon('magnifying-glass'));
+    document.querySelectorAll('[data-view]').forEach(button => button.replaceChildren(icon(button.dataset.view === 'grid' ? 'squares-four' : 'list')));
+    document.querySelectorAll('.dialog-close').forEach(button => button.replaceChildren(icon('x')));
   }
 
   function toast(message) { window.StudioMotion.toast(message); }
@@ -449,7 +479,7 @@
 
   function favoriteLabel(button, asset) {
     const selected = favorites.has(asset.id);
-    button.textContent = selected ? '♥' : '♡';
+    button.replaceChildren(icon('heart'));
     button.classList.toggle('selected', selected);
     button.setAttribute('aria-label', `${selected ? '取消收藏' : '收藏'} ${asset.name}`);
     button.setAttribute('aria-pressed', String(selected));
@@ -487,7 +517,8 @@
     titleRow.append(title, favorite);
     const bottom = element('div', 'card-bottom');
     bottom.append(element('span', '', `${asset.member || '未署名'} · ${asset.date.slice(5).replace('-', '/')}`), element('span', asset.demo ? 'demo-tag' : '', fileSize(asset)));
-    const download = element('a', 'card-download', asset.provider === 'google' || asset.provider === 'openlist' || asset.demo ? '↓ 下载' : '↓ ZIP');
+    const download = element('a', 'card-download');
+    download.append(icon('arrow-down'), document.createTextNode(asset.provider === 'google' || asset.provider === 'openlist' || asset.demo ? '下载' : 'ZIP'));
     download.href = asset.cloud ? cloudClient().downloadUrl(catalog.config, asset) : safeUrl(asset.sourceUrl);
     download.setAttribute('aria-label', `下载 ${asset.name}${asset.cloud && asset.provider === 'pcloud' ? '（ZIP）' : ''}`);
     if (asset.demo) download.download = asset.sourceUrl.split('/').pop();
@@ -535,9 +566,18 @@
       return sort === 'oldest' ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date);
     });
     $('#asset-grid').classList.toggle('list-view', activeView === 'list');
+    filteredAssets = visible;
+    document.body.dataset.loading = String(cloudBusy);
     window.StudioMotion.grid($('#asset-grid'), visible.map(cardFor));
+    if (cloudBusy && !visible.length) {
+      for (let index=0; index<6; index++) { const tile=element('div','asset-skeleton'); tile.setAttribute('aria-hidden','true'); $('#asset-grid').append(tile); }
+    }
     observeThumbnails();
     $('#empty-state').hidden = visible.length > 0 || cloudBusy;
+    const needsLogin = isOpenList() && !memberSession();
+    $('#empty-state h3').textContent = needsLogin ? '登录你的素材工作台' : '这里暂时没有素材';
+    $('#empty-login').hidden = !needsLogin;
+    $('#reset-filters').hidden = needsLogin;
     $('#library-title').textContent = TITLES[activeType];
     const demoCount = visible.filter((asset) => asset.demo).length;
     $('#results-text').textContent = `${visible.length} 份素材${demoCount ? ` · ${demoCount} 份演示` : ''}${term ? ` · 搜索“${term}”` : ''}`;
@@ -586,6 +626,10 @@
     const controller = new AbortController(); previewRequest = controller;
     const input = { ...catalog.config }, session = memberSession();
     activeAsset = asset;
+    const index = filteredAssets.findIndex(item => item.id === asset.id);
+    $('#detail-position').textContent = index >= 0 ? `${index+1} / ${filteredAssets.length}` : '';
+    $('#detail-previous').disabled = index <= 0;
+    $('#detail-next').disabled = index < 0 || index >= filteredAssets.length-1;
     $('#detail-type').textContent = `${TYPES[asset.type]}${asset.demo ? ' / 项目演示' : ` / ${cloudName()} 原文件`}`;
     $('#detail-name').textContent = asset.name;
     $('#detail-description').textContent = asset.cloud ? '' : asset.description || '';
@@ -663,6 +707,20 @@
       }
     } catch (error) { if (current()) { preview.replaceChildren(fallback(asset.type, '暂无预览')); $('#detail-note').textContent = error.message; } }
   }
+
+  function adjacentAsset(direction) {
+    const index = filteredAssets.findIndex(asset => asset.id === activeAsset?.id);
+    if (index < 0) return;
+    const next = filteredAssets[index+direction];
+    if (next) openDetail(next);
+  }
+  $('#detail-previous').addEventListener('click', () => adjacentAsset(-1));
+  $('#detail-next').addEventListener('click', () => adjacentAsset(1));
+  $('#empty-login').addEventListener('click', openMember);
+  document.addEventListener('keydown', event => {
+    if (!$('#detail-dialog').open || !['ArrowLeft','ArrowRight'].includes(event.key) || event.target.matches('input,textarea,select,video,audio')) return;
+    event.preventDefault(); adjacentAsset(event.key === 'ArrowLeft' ? -1 : 1);
+  });
 
   function openSettings(message = '') {
     clearConfirmation();
@@ -805,6 +863,7 @@
   });
 
   window.StudioMotion.bindDialogs();
+  decorateChrome();
   render();
   refreshCloud();
   if (storageWarning) toast(storageWarning);

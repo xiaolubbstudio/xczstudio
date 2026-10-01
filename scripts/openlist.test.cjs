@@ -14,6 +14,20 @@ function browser(fetch) {
 }
 const response = (data, code = 200) => ({ ok: code === 200, status: code, json: async () => ({ code, data }) });
 
+test('remembered username is scoped to the connection; persistent storage never receives the session', async () => {
+  const b = browser(async url => response(url.endsWith('/login') ? { token: 'fixture-private-token' } : { username: 'member01', role: 0 }));
+  const saved = new Map();
+  b.localStorage = { getItem: key => saved.get(key), setItem: (key, value) => saved.set(key, value), removeItem: key => saved.delete(key) };
+  b.OpenListAuth.remember(input, ' member01 ');
+  await b.OpenListAuth.begin(input, 'member01', 'fixture-private-password');
+  assert.equal(b.OpenListAuth.remembered(input), 'member01');
+  assert.equal(b.OpenListAuth.remembered({ ...input, folderUrl: 'https://other.example.test/' }), '');
+  assert.deepEqual([...saved.values()], ['member01']);
+  b.OpenListAuth.remember(input, '');
+  assert.equal(saved.size, 0);
+  assert.ok(b.OpenListAuth.get(input));
+});
+
 test('five independent browser sessions stay signed in; logout revokes only that token', async () => {
   // API contract fixture, not a claim of a deployed backend concurrency test.
   const active = new Map(), requests = [];

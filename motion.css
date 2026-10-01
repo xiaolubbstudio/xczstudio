@@ -1,6 +1,19 @@
-/* Only short feedback transitions; browsing and sorting stay immediate. */
-.button,.nav-item,.favorite-button,.avatar,.view-switch button { transition: background-color 100ms ease,color 100ms ease; }
-.asset-card { transition: border-color 100ms ease; }
+/* 高频动作保持短促；面板与反馈由可中断的 WAAPI 管理。 */
+.button,.icon-button,.nav-item,.favorite-button,.avatar,.view-switch button { transition:transform 140ms var(--ease-out),background-color 150ms ease,color 150ms ease; }
+.button:active,.icon-button:active,.nav-item:active,.favorite-button:active,.avatar:active,.view-switch button:active { transform:scale(.96); transition-duration:90ms; }
+.preview-play:active { transform:translateX(-50%) scale(.96); }
+.preview-button { transition:transform 220ms var(--ease-out),box-shadow 220ms ease; }
+.preview-button img { transition:transform 240ms var(--ease-out),opacity 180ms ease; }
+.asset-card { transition:border-color 140ms ease; }
+@media (hover:hover) and (pointer:fine) {
+  .preview-button:hover { transform:translateY(-3px); box-shadow:0 12px 24px #25262910; }
+  .preview-button:hover img { transform:scale(1.035); }
+  .nav-item:not(.active):hover { background:#ffffff12; color:#fff; }
+  .icon-button:hover,.favorite-button:hover,.avatar:hover { background:#e3e3dd; }
+  .button:not(.primary):hover { background:#e7e7e1; }
+}
 @media (prefers-reduced-motion:reduce) {
-  *,*::before,*::after { transition: none !important; animation: none !important; }
+  *,*::before,*::after { transition-duration:80ms !important; animation:none !important; }
+  .preview-button:hover,.preview-button:hover img,.button:active,.icon-button:active,.nav-item:active,.favorite-button:active,.avatar:active,.view-switch button:active { transform:none; }
+  .preview-play:active { transform:translateX(-50%); }
 }
