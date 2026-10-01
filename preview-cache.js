@@ -11,6 +11,14 @@
     return new URL('./__preview_cache__/' + Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, '0')).join(''), root.location.href).href;
   }
   const check = signal => signal?.throwIfAborted();
+  function imageType(bytes) {
+    const starts = values => values.every((value, index) => bytes[index] === value);
+    if (starts([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])) return 'image/png';
+    if (starts([0xff,0xd8,0xff])) return 'image/jpeg';
+    if (starts([0x47,0x49,0x46,0x38]) && [0x37,0x39].includes(bytes[4]) && bytes[5] === 0x61) return 'image/gif';
+    if (starts([0x52,0x49,0x46,0x46]) && [0x57,0x45,0x42,0x50].every((value, index) => bytes[index + 8] === value)) return 'image/webp';
+    return '';
+  }
   async function store() {
     try { return await root.caches?.open(NAME); } catch { return null; }
   }
@@ -48,8 +56,11 @@
     const url = await resolveUrl(); check(signal);
     if (!url) throw new Error('尚无预览');
     const response = await root.fetch(url, { signal, credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'default' });
-    const type = (response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
-    if (response.status !== 200 || !type.startsWith(kind + '/') || Number(response.headers.get('Content-Length') || 0) > limit) {
+    let type = (response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+    // Some cloud thumbnails are real images labeled as generic binary data.
+    // Only accept them after checking their file signature, never by filename.
+    const inspectImage = kind === 'image' && ['', 'application/octet-stream', 'binary/octet-stream'].includes(type);
+    if (response.status !== 200 || (!type.startsWith(kind + '/') && !inspectImage) || Number(response.headers.get('Content-Length') || 0) > limit) {
       await response.body?.cancel(); throw new Error('预览不可用或超过预览大小限制');
     }
     const reader = response.body.getReader(), chunks = []; let size = 0;
@@ -65,6 +76,11 @@
     } finally { await reader.cancel().catch(() => {}); }
     check(signal);
     if (total && total !== size) throw new Error('预览下载未完成，请重试');
+    if (inspectImage) {
+      const header = new Uint8Array(await new Blob(chunks).slice(0, 12).arrayBuffer());
+      type = imageType(header);
+      if (!type) throw new Error('预览返回的内容不是可识别的图片');
+    }
     const blob = new Blob(chunks, { type });
     if (!blob.size) throw new Error('预览文件为空');
     const persistent = await remember(cache, id, blob);

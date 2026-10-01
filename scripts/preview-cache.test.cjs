@@ -16,6 +16,35 @@ function browser(entries = new Map(), fetcher) {
   return { api: w.StudioPreviewCache, entries };
 }
 const options = { limit: 1048576, kind: 'video' };
+test('binary cloud thumbnails are identified by PNG, JPEG, GIF and WebP signatures and cached as images', async () => {
+  for (const [signature, type] of [
+    [[0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a], 'image/png'],
+    [[0xff,0xd8,0xff,0xe0], 'image/jpeg'],
+    [[0x47,0x49,0x46,0x38,0x39,0x61], 'image/gif'],
+    [[0x52,0x49,0x46,0x46,0,0,0,0,0x57,0x45,0x42,0x50], 'image/webp']
+  ]) {
+    const b = browser(new Map(), async () => new Response(new Uint8Array(signature), { headers: { 'Content-Type':'application/octet-stream' } }));
+    const loaded = await b.api.load([type], () => 'https://cdn.test/thumb', { kind:'image', limit:4*1048576 });
+    assert.equal(loaded.blob.type, type);
+    assert.equal(b.entries.size, 1);
+    const cached = await b.api.load([type], () => { throw Error('must use cache'); }, { kind:'image', limit:4*1048576 });
+    assert.equal(cached.cached, true);
+  }
+});
+test('binary HTML and unknown data never become cached thumbnails; larger valid thumbnails respect the new limit', async () => {
+  for (const data of ['<html>not a picture</html>', 'random binary data']) {
+    const b = browser(new Map(), async () => new Response(data, { headers:{'Content-Type':'application/octet-stream'} }));
+    await assert.rejects(b.api.load(['not-image'], () => 'https://cdn.test/thumb', {kind:'image',limit:4*1048576}));
+    assert.equal(b.entries.size, 0);
+  }
+  const bytes = new Uint8Array(1105991); bytes.set([0xff,0xd8,0xff]);
+  const b = browser(new Map(), async () => new Response(bytes, {headers:{'Content-Type':'image/jpeg','Content-Length':String(bytes.length)}}));
+  const loaded = await b.api.load(['large-thumb'], () => 'https://cdn.test/thumb', {kind:'image',limit:4*1048576});
+  assert.equal(loaded.blob.size, 1105991);
+  const tooLarge = browser(new Map(), async () => new Response(bytes,{headers:{'Content-Type':'image/jpeg','Content-Length':String(4*1048576+1)}}));
+  await assert.rejects(tooLarge.api.load(['too-large'], () => 'https://cdn.test/thumb', {kind:'image',limit:4*1048576}));
+  assert.equal(tooLarge.entries.size, 0);
+});
 test('persistent preview survives a new page without a resolver or network request; version and account isolate entries', async () => {
   const entries = new Map(); let calls = 0, resolutions = 0;
   const first = browser(entries, async () => { calls++; return new Response('low-quality-bytes', { headers: { 'Content-Type': 'video/mp4' } }); });

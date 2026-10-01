@@ -152,7 +152,7 @@
       let item = thumbnails.get(id);
       if (!item) {
         item = {}; thumbnails.set(id, item);
-        item.promise = window.StudioPreviewCache.load(parts, () => safeUrl(asset.previewUrl), { signal, kind: 'image', limit: 1048576 })
+        item.promise = window.StudioPreviewCache.load(parts, () => safeUrl(asset.previewUrl), { signal, kind: 'image', limit: 4 * 1048576 })
           .then(result => { if (signal.aborted || thumbnails.get(id) !== item) return ''; item.url = URL.createObjectURL(result.blob); return item.url; })
           .catch(() => '');
       }
@@ -162,11 +162,11 @@
       if (item.surface) button.dataset.surface = item.surface;
       image.addEventListener('load', () => {
         if (signal.aborted || !button.isConnected) return;
+        button.querySelector('.preview-fallback')?.remove();
         item.surface ||= asset.type === 'video' ? 'opaque' : imageSurface(image);
         button.dataset.surface = item.surface;
       }, { once: true });
       image.addEventListener('error', () => image.remove(), { once: true });
-      button.querySelector('.preview-fallback')?.remove();
       button.prepend(image);
     }
     const buttons = $('#asset-grid').querySelectorAll('.preview-button');
@@ -856,7 +856,7 @@
         const stage = element('div', 'preview-stage');
         preview.replaceChildren(stage);
         try {
-          const poster = await loadPart('poster', () => safeUrl(asset.previewUrl), 'image', 1048576);
+          const poster = await loadPart('poster', () => safeUrl(asset.previewUrl), 'image', 4 * 1048576);
           if (!current()) return;
           if (poster) { const image = element('img'); image.src = poster; image.alt = `${asset.name} 缩略图`; stage.append(image); }
         } catch (error) { if (controller.signal.aborted) return; }
