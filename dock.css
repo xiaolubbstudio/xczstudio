@@ -5,7 +5,8 @@ main { width:calc(100% - 240px); max-width:1440px; margin:0 auto; padding:0 52px
 .action-rail { position:fixed; right:18px; top:24px; display:flex; flex-direction:column; align-items:center; gap:14px; width:74px; max-height:calc(100dvh - 48px); overflow-y:auto; overflow-x:hidden; scrollbar-width:none; z-index:12; padding:12px; }
 .action-rail .button,.action-rail .icon-button,.action-rail .avatar,.action-rail .view-switch button { display:grid; place-items:center; flex-shrink:0; width:46px; height:46px; min-height:46px; padding:0; border-radius:50%; background:radial-gradient(circle at 28% 18%,#ffffff2d,transparent 44%),linear-gradient(150deg,#ffffff12,#ffffff03 70%,#ffffff09); border:0; color:#bdc9cc; backdrop-filter:blur(12px) saturate(115%); box-shadow:0 4px 12px #00000014,inset 0 1px 3px #ffffff1b,inset 0 -1px 3px #ffffff08; font-size:0; }
 .action-rail .button .icon,.action-rail .icon-button .icon,.action-rail .view-switch .icon { width:20px; height:20px; margin:0; }
-.action-rail .primary { color:#eea37c; }
+.action-rail #upload-button .icon { width:24px; height:24px; }
+.preview-fallback>.icon { width:32px; height:32px; }
 .action-rail .view-switch { display:flex; flex-direction:column; align-items:center; gap:14px; height:auto; padding:0; border:0; background:none; width:auto; overflow:visible; }
 .action-rail .view-switch button.active { color:#f3a779; background:radial-gradient(circle at 28% 18%,#e879492e,transparent 62%),linear-gradient(145deg,#737e833d,#20262a80); }
 .action-rail .avatar svg { width:22px; height:22px; }
@@ -46,8 +47,8 @@ main { width:calc(100% - 240px); max-width:1440px; margin:0 auto; padding:0 52px
 @media (hover:hover) and (pointer:fine) {
   .floating-search #clear-search:hover { background:#ffffff0d; color:#e3e9eb; }
   .tools-menu .tool-option:not(:disabled):hover { background:#ffffff0a; }
-  .action-rail button:hover { background:radial-gradient(circle at 28% 18%,#ffffff42,transparent 48%),linear-gradient(150deg,#ffffff20,#ffffff08 70%,#ffffff10); }
-  .action-rail .primary:hover { color:#ffc3a2; }
+  .action-rail .button:hover,.action-rail .icon-button:hover,.action-rail .avatar:hover { background:radial-gradient(circle at 28% 18%,#ffffff42,transparent 48%),linear-gradient(150deg,#ffffff20,#ffffff08 70%,#ffffff10); color:#eff4f5; }
+  html[data-theme="light"] .action-rail .button:hover,html[data-theme="light"] .action-rail .icon-button:hover,html[data-theme="light"] .action-rail .avatar:hover { background:radial-gradient(circle at 28% 18%,#ffffffa8,transparent 48%),linear-gradient(150deg,#ffffff55,#ffffff12 70%,#ffffff30); color:#37474d; }
 }
 @media (max-width:1100px) { main { width:calc(100% - 160px); padding-inline:20px; } .library-dock { width:70vw; } .library-dock .nav-item { padding:12px 9px; } .library-dock .nav-item>span { display:none; } }
 @media (max-width:760px) { main { width:calc(100% - 120px); padding-inline:0; } .library-dock { width:calc(100vw - 150px); } }
@@ -60,6 +61,7 @@ main { width:calc(100% - 240px); max-width:1440px; margin:0 auto; padding:0 52px
   .action-rail .button,.action-rail .icon-button,.action-rail .avatar,.action-rail .view-switch button { width:38px; height:38px; min-height:38px; }
   .action-rail .view-switch { gap:12px; }
   .action-rail .button .icon,.action-rail .icon-button .icon,.action-rail .view-switch .icon { width:17px; height:17px; }
+  .action-rail #upload-button .icon { width:21px; height:21px; }
   .library-dock { left:calc((100% - 65px)/2); max-width:calc(100vw - 85px); width:calc(100vw - 85px); bottom:max(14px,env(safe-area-inset-bottom)); gap:9px; }
   .floating-search { width:100%; padding-left:0; }
   .floating-search .search { height:40px; min-height:40px; padding:0 13px; }

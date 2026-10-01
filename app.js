@@ -217,7 +217,7 @@
       $('#member-info').textContent = member ? `${member.name} · 已登录` : signedIn ? '正在核实账号…' : '请使用你的素材库成员账号。';
       $('#member-status').textContent = message || (memberBusy ? '核实账号中…' : signedIn && !member?.canUpload ? '此账号没有上传权限' : '');
     }
-    $('#upload-button').replaceChildren(icon('arrow-up'), document.createTextNode('上传素材'));
+    $('#upload-button').replaceChildren(icon('file-upload'), document.createTextNode('上传素材'));
     $('#upload-button').setAttribute('aria-label', '上传素材');
     $('#upload-button').title = '上传素材';
   }
@@ -408,7 +408,7 @@
     const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
     svg.classList.add('icon'); svg.setAttribute('aria-hidden','true');
     const use = document.createElementNS('http://www.w3.org/2000/svg','use');
-    use.setAttribute('href', `assets/ui-icons.svg#${name}`); svg.append(use);
+    use.setAttribute('href', `assets/ui-icons.svg?v=20261002-symbols1#${name}`); svg.append(use);
     return svg;
   }
   function decorateChrome() {
@@ -416,7 +416,7 @@
     document.querySelectorAll('[data-type]').forEach(button => button.querySelector('span').replaceChildren(icon(types[button.dataset.type])));
     document.querySelectorAll('[data-icon]').forEach(node => node.replaceChildren(icon(node.dataset.icon)));
     $('.search > span').replaceChildren(icon('magnifying-glass'));
-    document.querySelectorAll('[data-view]').forEach(button => button.replaceChildren(icon(button.dataset.view === 'grid' ? 'squares-four' : 'list'), document.createTextNode(button.dataset.view === 'grid' ? '缩略图' : '列表')));
+    document.querySelectorAll('[data-view]').forEach(button => button.replaceChildren(icon(button.dataset.view === 'grid' ? 'squares-four' : 'list-view'), document.createTextNode(button.dataset.view === 'grid' ? '缩略图' : '列表')));
     document.querySelectorAll('.dialog-close').forEach(button => button.replaceChildren(icon('x')));
   }
 
@@ -519,7 +519,7 @@
 
   function fallback(type, label = '登记小预览后显示') {
     const node = element('div', 'preview-fallback');
-    node.append(element('span', '', { image: '▧', video: '▷', audio: '♫', animation: '✧', other: '▣' }[type]), element('small', '', label));
+    node.append(icon({ image:'image', video:'play', audio:'music-notes', animation:'sparkle', other:'file' }[type] || 'file'), element('small', '', label));
     return node;
   }
 
@@ -571,7 +571,7 @@
     const bottom = element('div', 'card-bottom');
     bottom.append(element('span', '', `${asset.member || '未署名'} · ${asset.date.slice(5).replace('-', '/')}`), element('span', asset.demo ? 'demo-tag' : '', fileSize(asset)));
     const download = element('a', 'card-download');
-    download.append(icon('arrow-down'), document.createTextNode(asset.provider === 'google' || asset.provider === 'openlist' || asset.demo ? '下载' : 'ZIP'));
+    download.append(icon('file-download'), document.createTextNode(asset.provider === 'google' || asset.provider === 'openlist' || asset.demo ? '下载' : 'ZIP'));
     download.href = asset.cloud ? cloudClient().downloadUrl(catalog.config, asset) : safeUrl(asset.sourceUrl);
     download.setAttribute('aria-label', `下载 ${asset.name}${asset.cloud && asset.provider === 'pcloud' ? '（ZIP）' : ''}`);
     if (asset.demo) download.download = asset.sourceUrl.split('/').pop();
@@ -655,7 +655,7 @@
   function setType(type) { activeType = type; render(); }
 
   function updateDetailFavorite() {
-    $('#detail-favorite').textContent = favorites.has(activeAsset.id) ? '♥ 已收藏' : '♡ 收藏';
+    $('#detail-favorite').replaceChildren(icon('heart'), document.createTextNode(favorites.has(activeAsset.id) ? '已收藏' : '收藏'));
     $('#detail-favorite').setAttribute('aria-pressed', String(favorites.has(activeAsset.id)));
   }
 
@@ -695,12 +695,12 @@
     const download = $('#detail-download');
     download.hidden = false;
     download.href = asset.cloud ? cloudClient().downloadUrl(catalog.config, asset) : safeUrl(asset.sourceUrl);
-    download.textContent = asset.demo ? '↓ 下载演示文件' : ['google', 'openlist'].includes(asset.provider) ? '↓ 下载原文件' : asset.cloud ? '↓ 下载 ZIP' : '↗ 在 pCloud 获取原文件';
+    download.replaceChildren(icon(asset.demo || asset.cloud ? 'file-download' : 'external-link'), document.createTextNode(asset.demo ? '下载演示文件' : ['google', 'openlist'].includes(asset.provider) ? '下载原文件' : asset.cloud ? '下载 ZIP' : '在 pCloud 获取原文件'));
     if (asset.demo || asset.cloud && asset.provider !== 'google') download.removeAttribute('target'); else download.target = '_blank';
     const source = $('#detail-source');
     source.hidden = !asset.cloud || asset.provider === 'openlist';
     source.href = safeUrl(asset.sourceUrl);
-    source.textContent = asset.provider === 'google' ? '↗ 在 Drive 预览' : '↗ pCloud 预览';
+    source.replaceChildren(icon('external-link'), document.createTextNode(asset.provider === 'google' ? '在 Drive 预览' : 'pCloud 预览'));
     download.onclick = asset.provider === 'openlist' ? event => downloadOpenList(event, asset) : asset.cloud ? () => toast(asset.provider === 'google' ? '已发起原文件下载' : '已发起 ZIP 下载') : null;
     if (asset.demo) download.setAttribute('download', asset.sourceUrl.split('/').pop());
     else download.removeAttribute('download');
@@ -734,7 +734,8 @@
         // MOV / ProRes 和 MKV 的浏览器兼容性不足，不为试播下载整份大原件。
         const nativeVideo = ['mp4', 'webm', 'm4v'].includes(extension) && (asset.provider === 'openlist' || !asset.cloud) && (!asset.sizeMB || asset.sizeMB <= 512);
         if (nativeVideo) {
-          const play = element('button', 'button primary preview-play', '▷ 播放原画质');
+          const play = element('button', 'button primary preview-play');
+          play.append(icon('play'), document.createTextNode('播放原画质'));
           play.title = '首次播放先缓存原视频，完成后播放；关闭预览可停止加载。';
           stage.append(play);
           play.addEventListener('click', async () => {
