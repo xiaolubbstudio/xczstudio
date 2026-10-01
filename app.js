@@ -671,6 +671,40 @@
     return card;
   }
 
+  function renderFolderBrowser(options, assets, selected) {
+    const selectedPath = selected === '*' ? null : JSON.parse(selected);
+    const label = selectedPath === null ? '' : selectedPath.at(-1) || '根目录';
+    const trigger = $('#folder-browser-button');
+    const caption = $('#current-folder-name');
+    caption.textContent = label; caption.hidden = selectedPath === null;
+    trigger.classList.toggle('is-selected', selectedPath !== null);
+    trigger.title = selectedPath === null ? '浏览文件夹' : `当前文件夹：${selectedPath.join(' / ') || '根目录'}`;
+    trigger.setAttribute('aria-label', selectedPath === null ? '浏览文件夹' : `浏览文件夹，当前：${selectedPath.join(' / ') || '根目录'}`);
+    trigger.disabled = !assets.length;
+    $('#folder-browser-list').replaceChildren(...options.map(([value, fullName]) => {
+      const parts = value === '*' ? null : JSON.parse(value);
+      const row = element('button', 'folder-option'); row.type = 'button';
+      const name = parts === null ? '全部素材' : parts.at(-1) || '根目录';
+      const count = assets.filter(asset => parts === null || (parts.length === 0 ? !asset.tags.length : parts.every((part, index) => asset.tags[index] === part))).length;
+      row.append(icon(parts === null ? 'squares-four' : 'folder'), element('span', 'folder-option-name', name), element('span', 'folder-option-count', String(count)));
+      row.style.setProperty('--folder-depth', String(Math.min(Math.max((parts?.length || 1) - 1, 0), 4)));
+      row.title = fullName; row.setAttribute('aria-label', `${fullName}，${count} 份素材`);
+      row.setAttribute('aria-pressed', String(value === selected));
+      row.addEventListener('click', () => { $('#folder-filter').value = value; $('#folder-browser').hidePopover(); render(); trigger.focus(); });
+      return row;
+    }));
+  }
+
+  function positionFolderBrowser() {
+    const menu = $('#folder-browser');
+    if (!menu.matches(':popover-open')) return;
+    const rect = $('#folder-browser-button').getBoundingClientRect();
+    const width = Math.min(320, window.innerWidth - 32);
+    menu.style.width = `${width}px`;
+    menu.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - width - 16))}px`;
+    menu.style.top = `${Math.max(16, Math.min(rect.bottom + 8, window.innerHeight - menu.offsetHeight - 16))}px`;
+  }
+
   function render() {
     const term = $('#search-input').value.trim().toLocaleLowerCase('zh-CN');
     const sort = $('#sort-select').value;
@@ -687,6 +721,7 @@
     const options = [...folders].sort((a, b) => a[0] === '*' ? -1 : b[0] === '*' ? 1 : a[0] === '[]' ? -1 : b[0] === '[]' ? 1 : a[1].localeCompare(b[1], 'zh-CN'));
     folderSelect.replaceChildren(...options.map(([value, label]) => { const option = element('option', '', label); option.value = value; return option; }));
     folderSelect.value = folders.has(previousFolder) ? previousFolder : '*';
+    renderFolderBrowser(options, assets, folderSelect.value);
     const path = folderSelect.value === '*' ? null : JSON.parse(folderSelect.value);
     const visible = assets.filter((asset) => {
       const matchesType = activeType === 'all' || (activeType === 'favorites' ? favorites.has(asset.id) : asset.type === activeType);
@@ -924,6 +959,9 @@
   });
   $('#sort-select').addEventListener('change', render);
   $('#folder-filter').addEventListener('change', render);
+  $('#folder-browser').addEventListener('toggle', positionFolderBrowser);
+  window.addEventListener('resize', positionFolderBrowser);
+  window.addEventListener('scroll', () => { if ($('#folder-browser').matches(':popover-open')) $('#folder-browser').hidePopover(); }, { passive: true });
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
     activeView = button.dataset.view;
     try { localStorage.setItem(VIEW_KEY, activeView); } catch { /* view stays usable */ }
