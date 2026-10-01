@@ -157,3 +157,61 @@ test('failed cloud upload cannot report success or persist an upload ticket', as
   assert.equal(progress.includes(100), false);
   assert.equal(b.sessionStorage.getItem('opaque-ticket'), undefined);
 });
+
+test('folder upload preserves nested paths and reuses directory checks for a batch', async () => {
+  const directories = new Map([['/', [{ name: '已有', is_dir: true }]], ['/已有', []]]);
+  const created = [], started = [], listed = [];
+  let current;
+  const b = browser(async (url, options) => {
+    if (url.endsWith('/login')) return response({ token: 'fixture' });
+    if (url.endsWith('/me')) return response({ username: 'member', role: 0 });
+    assert.equal(options.headers.Authorization, 'fixture');
+    const body = JSON.parse(options.body);
+    if (url.endsWith('/list')) {
+      listed.push(body.path);
+      assert.ok(directories.has(body.path));
+      return response({ total: directories.get(body.path).length, content: directories.get(body.path).map(item => ({ ...item })) });
+    }
+    if (url.endsWith('/mkdir')) {
+      assert.equal(directories.has(body.path), false);
+      const parent = body.path.slice(0, body.path.lastIndexOf('/')) || '/';
+      assert.ok(directories.has(parent), 'parent exists before creating child');
+      directories.get(parent).push({ name: body.path.split('/').at(-1), is_dir: true });
+      directories.set(body.path, []); created.push(body.path); return response(null);
+    }
+    if (url.endsWith('/start')) { current = body; started.push(body.path + '/' + body.name); return response({ ticket: 'fixture-ticket', chunkSize: 8 * 1048576, ready: true }); }
+    assert.ok(url.endsWith('/finish'));
+    return response({ name: current.name, size: current.size });
+  });
+  await b.OpenListAuth.begin(input, 'member', 'fixture');
+  const cache = new Map();
+  for (const relative of ['包/子目录/同名.txt', '包/另一个/同名.txt', '包/子目录/第二份.txt', '已有/素材.txt']) {
+    const file = new Blob(['original']); file.name = relative.split('/').at(-1); file.webkitRelativePath = relative;
+    await b.OpenListClient.upload(input, file, undefined, undefined, b.OpenListAuth.get(input), relative, cache);
+  }
+  assert.deepEqual(created, ['/包', '/包/子目录', '/包/另一个']);
+  assert.deepEqual(started, ['/包/子目录/同名.txt', '/包/另一个/同名.txt', '/包/子目录/第二份.txt', '/已有/素材.txt']);
+  assert.deepEqual(listed, ['/']);
+});
+
+test('folder upload rejects unsafe paths, directory/file collisions and mkdir failures without flattening', async () => {
+  const file = new Blob(['original']); file.name = '素材.txt';
+  const b = browser(async url => response(url.endsWith('/login') ? { token: 'fixture' } : { username: 'member', role: 0 }));
+  await b.OpenListAuth.begin(input, 'member', 'fixture');
+  for (const relative of ['/素材.txt', '../素材.txt', '包//素材.txt', '包/../素材.txt', '包\\素材.txt', '包/不同.txt', '包/\u0000/素材.txt']) {
+    await assert.rejects(b.OpenListClient.upload(input, file, undefined, undefined, b.OpenListAuth.get(input), relative), /上传目录路径无效/);
+  }
+  for (const collision of [true, false]) {
+    const requests = [];
+    const scope = browser(async (url, options) => {
+      if (url.endsWith('/login')) return response({ token: 'fixture' });
+      if (url.endsWith('/me')) return response({ username: 'member', role: 0 });
+      requests.push(url);
+      if (url.endsWith('/list')) return response({ total: collision ? 1 : 0, content: collision ? [{ name: '包', is_dir: false }] : [] });
+      assert.ok(url.endsWith('/mkdir')); return response(null, 403);
+    });
+    await scope.OpenListAuth.begin(input, 'member', 'fixture');
+    await assert.rejects(scope.OpenListClient.upload(input, file, undefined, undefined, scope.OpenListAuth.get(input), '包/素材.txt'));
+    assert.equal(requests.some(url => url.endsWith('/start')), false);
+  }
+});

@@ -120,7 +120,10 @@ dialog::backdrop { background:#22232785; backdrop-filter:blur(5px); }
 .field-help,.dialog-intro { color:#77786e; font-size:11px; }
 .form-error,.danger { color:#af4b32; }
 .upload-row { border-radius:12px; background:#eeeee9; border:0; padding:14px; }
-#choose-files { padding:30px 16px; border:1px dashed #bcbdb2; background:#eeeee9; border-radius:16px; }
+.upload-choices { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px; }
+.upload-choices .button { min-width:0; padding:22px 10px; border:0; background:#eeeee9; border-radius:16px; gap:8px; }
+.upload-choices .icon { width:22px; height:22px; }
+.upload-queue { max-height:34vh; overflow:auto; }
 .connection-help { border-color:var(--line); }
 .toast { top:18px; bottom:auto; border-radius:18px; background:#26272b; padding:14px 24px; color:#fff; font-size:12px; box-shadow:0 10px 30px #25262925; }
 .auth-page { min-height:100dvh; background:var(--bg); }

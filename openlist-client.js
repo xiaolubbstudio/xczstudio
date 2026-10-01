@@ -96,17 +96,48 @@
     return url;
   }
   function downloadUrl() { return '#'; }
-  async function upload(input, file, progress, signal, session = sessionFor(input)) {
-    const { endpoint, folderPath } = config(input);
+  function uploadLocation(input, file, relativePath = file?.webkitRelativePath || file?.name) {
+    const base = config(input).folderPath;
+    if (typeof relativePath !== 'string' || relativePath.includes('\\')) throw new Error('上传目录路径无效。');
+    const parts = relativePath.split('/');
+    if (parts.some(name => !name || name.length > 255 || /[\u0000-\u001f]/.test(name) || ['.', '..'].includes(name)) || parts.at(-1) !== file?.name) throw new Error('上传目录路径无效。');
+    return { folders: parts.slice(0, -1), path: parts.length === 1 ? base : join(base, parts.slice(0, -1).join('/')) };
+  }
+  async function ensureUploadFolders(input, folders, session, signal, cache) {
+    let parent = config(input).folderPath;
+    const { endpoint } = config(input);
+    for (const name of folders) {
+      signal?.throwIfAborted();
+      const key = endpoint + parent;
+      let contents = cache.get(key);
+      if (!contents) {
+        contents = (await directory(input, parent, session, signal, true)).content;
+        cache.set(key, contents);
+      }
+      const existing = contents.find(item => item.name === name);
+      if (existing && !existing.is_dir) throw new Error(`“${name}”已是文件，无法创建同名文件夹。`);
+      const next = join(parent, name);
+      if (!existing) {
+        await request(input, 'fs/mkdir', { path: next }, session, signal);
+        contents.push({ name, is_dir: true });
+        cache.set(endpoint + next, []);
+      }
+      parent = next;
+    }
+  }
+  async function upload(input, file, progress, signal, session = sessionFor(input), relativePath, folderCache = new Map()) {
+    const { endpoint } = config(input);
     if (!session || session.endpoint !== endpoint || !session.token || /[\u0000-\u0020]/.test(session.token)) throw new Error('请先登录当前素材库。');
     if (!file || !Number.isSafeInteger(file.size) || file.size < 1 || file.size > 512 * 1048576 || typeof file.name !== 'string' || !file.name || file.name.length > 255 || /[\\/\u0000-\u001f]/.test(file.name) || ['.', '..'].includes(file.name)) throw new Error('请选择有效文件，单个文件上限 512 MB。');
+    const destinationFolder = uploadLocation(input, file, relativePath);
     signal?.throwIfAborted();
     let bytes = await file.arrayBuffer();
     const digest = await root.crypto.subtle.digest('SHA-256', bytes);
     bytes = null;
     const sha256 = Array.from(new Uint8Array(digest), n => n.toString(16).padStart(2, '0')).join('');
     signal?.throwIfAborted();
-    const start = await request(input, 'fs/studio_upload/start', { path: folderPath, name: file.name, size: file.size, sha256 }, session, signal);
+    await ensureUploadFolders(input, destinationFolder.folders, session, signal, folderCache);
+    const start = await request(input, 'fs/studio_upload/start', { path: destinationFolder.path, name: file.name, size: file.size, sha256 }, session, signal);
     if (!start?.ticket || start.chunkSize !== 8 * 1048576) throw new Error('后台未返回有效上传会话。');
     for (let offset = 0, part = 1; !start.ready && offset < file.size; offset += start.chunkSize, part++) {
       signal?.throwIfAborted();
@@ -128,7 +159,7 @@
     progress?.(100);
     return result;
   }
-  const api = { config, request, mediaUrl, list, directory, profile, memberAccess, resolve, downloadUrl, upload };
+  const api = { config, request, mediaUrl, list, directory, profile, memberAccess, resolve, downloadUrl, uploadLocation, upload };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.OpenListClient = api;
 })(typeof window === 'undefined' ? globalThis : window);

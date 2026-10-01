@@ -324,35 +324,45 @@
   function renderQueue() {
     $('#upload-queue').replaceChildren(...uploadQueue.map((item) => {
       const row = element('div', 'upload-row');
-      row.append(element('strong', '', item.file.name), element('span', '', item.status));
+      row.append(element('strong', '', item.relativePath), element('span', '', item.status));
       return row;
     }));
     $('#upload-start').disabled = uploading || !uploadQueue.some((item) => !item.done);
     $('#upload-member').disabled = uploading;
     $('#choose-files').hidden = uploading;
+    $('#choose-folder').hidden = uploading || !isOpenList();
     $('#upload-cancel').hidden = !uploading;
   }
 
   function openUpload() {
     if (!memberSession() || !member?.canUpload || memberBusy) { openMember(); return; }
-    $('#upload-message').textContent = '请选择文件。';
+    $('#upload-message').textContent = '可继续添加多个文件或文件夹。';
     $('#upload-member').value = member.name;
     $('#upload-target').textContent = `上传到：${cloudFolderName || '素材文件夹'}`;
     renderQueue();
     window.StudioMotion.open($('#upload-dialog'));
   }
 
-  $('#upload-files').addEventListener('change', (event) => {
+  function addUploadFiles(event) {
     if (uploading) return;
     const files = [...event.target.files];
-    uploadQueue = files.map((file) => ({ file, done: false, status: `${file.size < 1048576 ? `${Math.ceil(file.size / 1024)} KB` : `${(file.size / 1048576).toFixed(1)} MB`} · 等待上传` }));
+    uploadQueue = uploadQueue.filter(item => !item.done);
+    for (const file of files) {
+      const relativePath = file.webkitRelativePath || file.name;
+      if (uploadQueue.some(item => item.relativePath === relativePath && item.file.size === file.size && item.file.lastModified === file.lastModified)) continue;
+      uploadQueue.push({ file, relativePath, done: false, status: `${file.size < 1048576 ? `${Math.ceil(file.size / 1024)} KB` : `${(file.size / 1048576).toFixed(1)} MB`} · 等待上传` });
+    }
     event.target.value = '';
-    $('#upload-message').textContent = `${files.length} 个文件待上传`;
+    $('#upload-message').textContent = `${uploadQueue.length} 个文件待上传`;
     renderQueue();
-  });
-  $('#choose-files').addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $('#upload-files').click(); }
-  });
+  }
+  $('#upload-files').addEventListener('change', addUploadFiles);
+  $('#upload-folder').addEventListener('change', addUploadFiles);
+  for (const [button, input] of [['#choose-files', '#upload-files'], ['#choose-folder', '#upload-folder']]) {
+    $(button).addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $(input).click(); }
+    });
+  }
   $('#upload-start').addEventListener('click', async () => {
     if (uploading) return;
     const session = memberSession();
@@ -363,13 +373,14 @@
     const client = cloudClient();
     const auth = cloudAuth();
     const previousCount = cloudAssets.length;
+    const folderCache = new Map();
     let completed = 0;
     renderQueue();
     for (const item of uploadQueue) {
       if (item.done || uploadRequest.signal.aborted) continue;
       try {
         item.status = '正在上传…'; renderQueue();
-        await client.upload(settings, item.file, (percent) => { item.status = `${percent}% · 正在上传`; renderQueue(); }, uploadRequest.signal, session);
+        await client.upload(settings, item.file, (percent) => { item.status = `${percent}% · 正在上传`; renderQueue(); }, uploadRequest.signal, session, item.relativePath, folderCache);
         item.done = true; item.status = '上传成功'; completed++;
       } catch (error) { item.status = error.message; if ([1000, 2000, 401].includes(error.code)) auth.logout(); }
       renderQueue();
@@ -639,7 +650,7 @@
     $('#draft-notice').hidden = !draft;
     $('#footer-status').textContent = isCloud() ? `${cloudName()} 自动目录` : draft ? '本机设置草稿 · 尚未发布' : '演示目录 · 尚未接入真实仓库';
     $('#hosting-provider').textContent = cloudName();
-    $('#upload-duplicate-note').textContent = isGoogle() ? '同名文件保留为新文件。' : '同名文件自动改名。';
+    $('#upload-duplicate-note').textContent = isOpenList() ? '保留文件夹层级；同名文件自动改名。空文件夹不上传。' : isGoogle() ? '同名文件保留为新文件。' : '同名文件自动改名。';
     document.querySelectorAll('[data-view]').forEach(button => {
       const selected = button.dataset.view === activeView;
       button.classList.toggle('active', selected);

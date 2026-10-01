@@ -51,7 +51,7 @@ dialog::backdrop { background:#080a0cc2; backdrop-filter:blur(9px); }
 .form-dialog input:not([type=file]),.form-dialog textarea,.form-dialog select,.form-dialog input[readonly] { background:#111719; border-color:#ffffff16; color:#e0e5e7; }
 .form-dialog input::placeholder { color:#7c878c; }
 .password-field .icon-button { background:transparent; }
-.upload-row,#choose-files,.empty-state { background:#1e2427; border-color:#ffffff1b; }
+.upload-row,.upload-choices .button,.empty-state { background:#1e2427; border-color:#ffffff1b; }
 .empty-state h3 { color:#bec5c8; }
 .notice { background:#34261c; border-color:#e8794930; color:#e8ad8e; }
 .asset-skeleton { background:linear-gradient(135deg,#272d30,#1b2023); }
