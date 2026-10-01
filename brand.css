@@ -1,7 +1,7 @@
 /* Layered wordmark; outlined lettering keeps every device identical. */
 .studio-lockup { --logo-chinese:#eceee9; --logo-english:#873e28; }
 .studio-lockup>svg { display:block; width:100%; height:clamp(154px,14vw,220px); overflow:visible; }
-.logo-chinese { color:var(--logo-chinese); cursor:pointer; pointer-events:bounding-box; }
+.logo-chinese { color:var(--logo-chinese); cursor:pointer; pointer-events:visiblePainted; }
 .logo-english { color:var(--logo-english); cursor:pointer; }
 .logo-chinese,.logo-english { transition:color 180ms cubic-bezier(.23,1,.32,1); }
 .logo-chinese:focus-visible,.logo-english:focus-visible { outline:2px solid var(--orange); outline-offset:10px; }
@@ -22,7 +22,7 @@ html[data-theme="light"] .preview-button[data-surface="opaque"] { background:lin
 html[data-theme="light"] .card-type { background:#ffffffe0; color:#69777b; border-color:#2026290b; }
 html[data-theme="light"] .list-view,html[data-theme="light"] .empty-state { background:#e3e7e2; border-color:#20262910; }
 html[data-theme="light"] .list-view .asset-card { border-color:#20262910; }
-html[data-theme="light"] .action-rail .button,html[data-theme="light"] .action-rail .icon-button,html[data-theme="light"] .action-rail .avatar { background:radial-gradient(circle at 28% 18%,#ffffff85,transparent 44%),linear-gradient(150deg,#ffffff38,#ffffff09 70%,#ffffff20); color:#7a888d; box-shadow:0 4px 12px #30413a0b,inset 0 1px 3px #ffffff70,inset 0 -1px 3px #ffffff20; }
+html[data-theme="light"] .action-rail .button,html[data-theme="light"] .action-rail .icon-button,html[data-theme="light"] .action-rail .avatar { background:#20262909; color:#7a888d; box-shadow:none; }
 html[data-theme="light"] .floating-search .search { background:linear-gradient(135deg,#ffffff6b,#ffffff20),#e2e7e3bd; border-color:#ffffff55; box-shadow:0 8px 24px #30413a18,inset 0 1px 0 #ffffff60; }
 html[data-theme="light"] .floating-search .search input { color:var(--ink); }
 html[data-theme="light"] .floating-search .search>span,html[data-theme="light"] .floating-search #clear-search { color:#738080; }

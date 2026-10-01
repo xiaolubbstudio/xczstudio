@@ -3,7 +3,7 @@ main { width:calc(100% - 240px); max-width:1440px; margin:0 auto; padding:0 52px
 .workspace-heading h1.studio-lockup { width:100%; }
 .studio-lockup img { height:clamp(154px,14vw,220px); object-fit:contain; }
 .action-rail { position:fixed; right:18px; top:24px; display:flex; flex-direction:column; align-items:center; gap:14px; width:74px; max-height:calc(100dvh - 48px); overflow-y:auto; overflow-x:hidden; scrollbar-width:none; z-index:12; padding:12px; }
-.action-rail .button,.action-rail .icon-button,.action-rail .avatar,.action-rail .view-switch button { display:grid; place-items:center; flex-shrink:0; width:46px; height:46px; min-height:46px; padding:0; border-radius:50%; background:radial-gradient(circle at 28% 18%,#ffffff2d,transparent 44%),linear-gradient(150deg,#ffffff12,#ffffff03 70%,#ffffff09); border:0; color:#bdc9cc; backdrop-filter:blur(12px) saturate(115%); box-shadow:0 4px 12px #00000014,inset 0 1px 3px #ffffff1b,inset 0 -1px 3px #ffffff08; font-size:0; }
+.action-rail .button,.action-rail .icon-button,.action-rail .avatar,.action-rail .view-switch button { display:grid; place-items:center; flex-shrink:0; width:46px; height:46px; min-height:46px; padding:0; border-radius:50%; background:#ffffff0d; border:0; color:#bdc9cc; backdrop-filter:blur(8px); box-shadow:none; font-size:0; }
 .action-rail .button .icon,.action-rail .icon-button .icon,.action-rail .view-switch .icon { width:20px; height:20px; margin:0; }
 .action-rail #upload-button .icon { width:24px; height:24px; }
 .preview-fallback>.icon { width:32px; height:32px; }
@@ -47,8 +47,8 @@ main { width:calc(100% - 240px); max-width:1440px; margin:0 auto; padding:0 52px
 @media (hover:hover) and (pointer:fine) {
   .floating-search #clear-search:hover { background:#ffffff0d; color:#e3e9eb; }
   .tools-menu .tool-option:not(:disabled):hover { background:#ffffff0a; }
-  .action-rail .button:hover,.action-rail .icon-button:hover,.action-rail .avatar:hover { background:radial-gradient(circle at 28% 18%,#ffffff42,transparent 48%),linear-gradient(150deg,#ffffff20,#ffffff08 70%,#ffffff10); color:#eff4f5; }
-  html[data-theme="light"] .action-rail .button:hover,html[data-theme="light"] .action-rail .icon-button:hover,html[data-theme="light"] .action-rail .avatar:hover { background:radial-gradient(circle at 28% 18%,#ffffffa8,transparent 48%),linear-gradient(150deg,#ffffff55,#ffffff12 70%,#ffffff30); color:#37474d; }
+  .action-rail .button:hover,.action-rail .icon-button:hover,.action-rail .avatar:hover { background:#ffffff17; color:#eff4f5; }
+  html[data-theme="light"] .action-rail .button:hover,html[data-theme="light"] .action-rail .icon-button:hover,html[data-theme="light"] .action-rail .avatar:hover { background:#20262912; color:#37474d; }
 }
 @media (max-width:1100px) { main { width:calc(100% - 160px); padding-inline:20px; } .library-dock { width:70vw; } .library-dock .nav-item { padding:12px 9px; } .library-dock .nav-item>span { display:none; } }
 @media (max-width:760px) { main { width:calc(100% - 120px); padding-inline:0; } .library-dock { width:calc(100vw - 150px); } }
@@ -78,12 +78,7 @@ main { width:calc(100% - 240px); max-width:1440px; margin:0 auto; padding:0 52px
 .floating-search .search,.category-shelf,.library-dock .nav-item { border-radius:999px; }
 @media (max-width:600px) { .library-dock { max-width:calc((100vw - 85px)/1.15); } }
 
-/* A heart-shaped glass bubble is the separate entry to saved materials. */
-.action-rail #favorites-button { position:relative; background:none; border-radius:0; box-shadow:none; backdrop-filter:none; color:#d9e4e6; filter:drop-shadow(0 4px 6px #00000028); }
-#favorites-button::before { content:""; position:absolute; inset:0; clip-path:url(#favorite-bubble-clip); backdrop-filter:blur(12px) saturate(115%); background:#ffffff03; }
-#favorites-button .heart-surface { position:relative; display:block; width:100%; height:100%; }
+/* Saved materials use the same flat circular control as the other tools. */
 .action-rail #favorites-button.active { color:#ff5b73; }
 .favorite-button.selected,#detail-favorite.selected { color:#ff5b73; background:#ff5b7312; }
-html[data-theme="light"] .action-rail #favorites-button { color:#849a98; }
 html[data-theme="light"] .action-rail #favorites-button.active { color:#e33452; }
-@media (hover:hover) and (pointer:fine) { .action-rail #favorites-button:hover { color:#f2f7f8; } .action-rail #favorites-button.active:hover { color:#ff7c90; } html[data-theme="light"] .action-rail #favorites-button:hover { color:#557572; } html[data-theme="light"] .action-rail #favorites-button.active:hover { color:#e33452; } }
