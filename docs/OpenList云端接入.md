@@ -10,7 +10,13 @@
 
 Worker、数据库和权限独立，但同一个 Cloudflare 账号下的免费额度仍共享；不能把资源隔离理解成额度隔离。后台网址里的 `eliya-activation-cloud.workers.dev` 是账号公共子域，前面的 `xczstudio-openlist-trial` 才是该 Worker 的名称。
 
-五个普通试验账号为 `member01` 至 `member05`，限制到 `/素材`，暂不授予写权限；管理员账号为 `admin`。初始密码只在本机 Windows 用户可解密的 `.cloud-backend/private/credentials.dpapi` 中保存，不放进网站、Git 或聊天。管理员可在本机手动运行 `.cloud-backend/复制后台登录密码.ps1`，选择账号后将其初始密码复制到剪贴板，在自己的后台登录并修改密码；改密后本机初始备份不会自动更新。不要上传这个私有目录。
+五个普通试验账号为 `member01` 至 `member05`，限制到 `/素材`，暂不授予写权限；管理员账号为 `admin`。初始密码只在本机 Windows 用户可解密的 `.cloud-backend/private/credentials.dpapi` 中保存，不放进网站、Git 或聊天。管理员在本机双击 `.cloud-backend/studio-login.cmd`，将初始管理员密码复制到剪贴板，再进入 [后台登录页](https://xczstudio-openlist-trial.eliya-activation-cloud.workers.dev/@login)，用户名填 `admin`。启动窗口会保持打开，方便查看成功提示或错误。旧的 `.cloud-backend/复制后台登录密码.ps1` 入口仍兼容，可通过 `-Account member01` 等参数选择成员。改密后本机初始备份不会自动更新。不要上传这个私有目录。
+
+### 登录排错
+
+本机 PowerShell 脚本已改为 UTF-8 BOM，避免 Windows 自带 PowerShell 把中文误读成语法错误；`-CheckOnly` 可以检查账号解密，不读取或修改剪贴板。运行失败不会打印密码或令牌。
+
+若初次访问首页出现 `failed get storage: storage not found; please add a storage first`，先进入上面的登录页。本次实际检查后台健康返回 200、管理员登录成功，而挂载数量为 0；该报错来自还没有添加任何云盘，并不代表管理员密码错误。添加并验证素材目录后才能检查真实素材的预览和下载。
 
 线上 API 已实测五个成员同时登录并各自取得正确身份；退出其中一个后，其令牌失效，其他四个继续有效。已修复上游仅用进程内缓存／KV 撤销令牌的限制，改为素材库 D1 持久化并在验证时读取，从而支持跨实例退出。匿名用户和普通成员均不能访问管理接口。后台健康检查正确识别 D1 并返回 200。后台认证、退出及健康检查的 20 项测试通过。这些结果不替代五个实际成员在各自网络进行素材预览、下载和上传验收。
 
