@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="styles.css?v=20261001-preview1"><link rel="stylesheet" href="workspace.css?v=20261002-mobile1"><link rel="stylesheet" href="motion.css?v=20261002-mobile1">
   <link rel="stylesheet" href="brand.css?v=20261002-symbols1">
   <link rel="stylesheet" href="dark.css?v=20261002-dark1">
-  <link rel="stylesheet" href="dock.css?v=20261002-dock15">
+  <link rel="stylesheet" href="dock.css?v=20261002-favorites1">
 </head>
 <body>
   <a class="skip-link" href="#asset-grid">跳到素材</a>
@@ -19,6 +19,7 @@
   <button id="refresh-button" class="button secondary" aria-label="刷新素材目录" title="刷新素材目录"><span data-icon="arrows-clockwise"></span></button>
   <button id="upload-button" class="button secondary" aria-label="上传素材" title="上传素材"><span data-icon="file-upload"></span></button>
   <button id="settings-button" class="icon-button" aria-label="调整" title="调整" data-icon="sliders-horizontal"></button>
+  <button id="favorites-button" class="icon-button favorite-bubble" aria-label="查看收藏" title="查看收藏" aria-pressed="false"><svg class="heart-surface" viewBox="0 0 48 48" aria-hidden="true"><defs><clipPath id="favorite-bubble-clip" clipPathUnits="objectBoundingBox"><path d="M.5 .92C.42 .86 .04 .61 .04 .32C.04 .08 .33 .01 .5 .23C.67 .01 .96 .08 .96 .32C.96 .61 .58 .86 .5 .92Z"/></clipPath><linearGradient id="favorite-glass" x1="0" y1="0" x2="1" y2="1"><stop stop-color="currentColor" stop-opacity=".32"/><stop offset=".46" stop-color="currentColor" stop-opacity=".08"/><stop offset="1" stop-color="currentColor" stop-opacity=".04"/></linearGradient></defs><path class="heart-glass" d="M24 44.16C20.16 41.28 1.92 29.28 1.92 15.36C1.92 3.84 15.84 .48 24 11.04C32.16 .48 46.08 3.84 46.08 15.36C46.08 29.28 27.84 41.28 24 44.16Z" fill="url(#favorite-glass)"/><path d="M5 15C5 6 15 4 20 10" fill="none" stroke="currentColor" stroke-opacity=".3" stroke-width="1.2" stroke-linecap="round"/></svg></button>
   <button id="tools-button" class="icon-button" aria-label="更多选项" title="更多选项" popovertarget="tools-menu" aria-controls="tools-menu" data-icon="list"></button>
 </aside>
 <section id="tools-menu" class="tools-menu" popover aria-label="更多选项">
@@ -39,7 +40,6 @@
       <button class="nav-item" data-type="audio"><span>♫</span>音效与音乐</button>
       <button class="nav-item" data-type="animation"><span>✧</span>动画与元素</button>
       <button class="nav-item" data-type="other"><span>□</span>其他文件</button>
-      <button class="nav-item" data-type="favorites"><span>♡</span>我的收藏</button>
     </nav></div>
 </aside>
   <main>
@@ -94,6 +94,6 @@
   </dialog>
   <dialog id="member-dialog" class="form-dialog"><button class="dialog-close" data-close aria-label="关闭">×</button><h2>成员登录</h2><p id="member-info" class="dialog-intro">请使用受邀成员账号登录。</p><p id="member-permission-help" class="field-help"></p><form id="openlist-login-form" hidden><label>成员账号<input id="openlist-username" name="username" placeholder="例如 member01" autocomplete="username" maxlength="100" required></label><label>密码<div class="password-field"><input id="openlist-password" aria-label="密码" name="password" type="password" placeholder="填写管理员给你的密码" autocomplete="current-password" required><button id="password-toggle" class="icon-button" type="button" aria-label="显示密码" aria-pressed="false" data-icon="eye"></button></div></label><label>两步验证码（如已启用）<input id="openlist-otp" autocomplete="one-time-code" inputmode="numeric" maxlength="8"></label><label class="remember-account"><input id="openlist-remember" type="checkbox">记住账号</label><button id="openlist-login-submit" class="button primary full-width" type="submit">登录素材库</button></form><div class="settings-actions"><button id="member-authorize" class="button primary">登录</button><button id="member-folder-authorize" class="button primary" hidden>授权素材文件夹</button><button id="member-recheck" class="button secondary" hidden>重新核实权限</button></div><p id="member-login-message" class="field-help" role="status"></p><p class="field-help">关闭标签页即退出登录。</p></dialog>
   <div id="toast" class="toast" role="status" popover="manual" hidden></div>
-  <script src="data/catalog.js?v=20261002-mobile1"></script><script src="pcloud-auth.js?v=20260928-auth2"></script><script src="pcloud-client.js?v=20261001-preview1"></script><script src="google-drive-client.js?v=20261001-preview1"></script><script src="google-drive-auth.js?v=20260930-drive1"></script><script src="openlist-client.js?v=20261002-mobile1"></script><script src="openlist-auth.js?v=20261002-mobile1"></script><script src="motion.js?v=20261002-mobile1"></script><script src="preview-cache.js?v=20261001-preview1"></script><script src="app.js?v=20261002-symbols1"></script>
+  <script src="data/catalog.js?v=20261002-mobile1"></script><script src="pcloud-auth.js?v=20260928-auth2"></script><script src="pcloud-client.js?v=20261001-preview1"></script><script src="google-drive-client.js?v=20261001-preview1"></script><script src="google-drive-auth.js?v=20260930-drive1"></script><script src="openlist-client.js?v=20261002-mobile1"></script><script src="openlist-auth.js?v=20261002-mobile1"></script><script src="motion.js?v=20261002-mobile1"></script><script src="preview-cache.js?v=20261001-preview1"></script><script src="app.js?v=20261002-favorites1"></script>
 </body>
 </html>

@@ -12,7 +12,7 @@ main { width:calc(100% - 240px); max-width:1440px; margin:0 auto; padding:0 52px
 .action-rail .avatar svg { width:22px; height:22px; }
 .action-rail .avatar img { width:100%; height:100%; border-radius:50%; object-fit:cover; }
 .action-rail #settings-button::after { content:none; }
-.tools-menu { position:fixed; inset:272px 102px auto auto; width:244px; max-height:calc(100dvh - 296px); overflow:auto; margin:0; padding:16px; border:0; border-radius:24px; background:linear-gradient(145deg,#4a545966,#252c30b8); color:var(--ink); backdrop-filter:blur(28px) saturate(135%); box-shadow:0 18px 50px #00000060,inset 0 2px 6px #ffffff0b; opacity:0; transform:translateX(8px) scale(.97); transform-origin:right top; transition:opacity 180ms cubic-bezier(.23,1,.32,1),transform 220ms cubic-bezier(.23,1,.32,1),display 220ms allow-discrete,overlay 220ms allow-discrete; }
+.tools-menu { position:fixed; inset:332px 102px auto auto; width:244px; max-height:calc(100dvh - 356px); overflow:auto; margin:0; padding:16px; border:0; border-radius:24px; background:linear-gradient(145deg,#4a545966,#252c30b8); color:var(--ink); backdrop-filter:blur(28px) saturate(135%); box-shadow:0 18px 50px #00000060,inset 0 2px 6px #ffffff0b; opacity:0; transform:translateX(8px) scale(.97); transform-origin:right top; transition:opacity 180ms cubic-bezier(.23,1,.32,1),transform 220ms cubic-bezier(.23,1,.32,1),display 220ms allow-discrete,overlay 220ms allow-discrete; }
 .tools-menu:popover-open { opacity:1; transform:translateX(0) scale(1); }
 @starting-style { .tools-menu:popover-open { opacity:0; transform:translateX(8px) scale(.97); } }
 .tools-menu h2 { margin:0 0 12px; padding:0 8px; font-size:11px; font-weight:500; color:var(--muted); }
@@ -57,7 +57,7 @@ main { width:calc(100% - 240px); max-width:1440px; margin:0 auto; padding:0 52px
   .workspace-heading { padding:8px 0 22px; }
   .studio-lockup img { height:auto; }
   .action-rail { right:2px; top:8px; width:58px; padding:10px; gap:12px; max-height:calc(100dvh - 16px); }
-  .tools-menu { inset:208px 64px auto auto; width:min(244px,calc(100vw - 86px)); max-height:calc(100dvh - 232px); }
+  .tools-menu { inset:258px 64px auto auto; width:min(244px,calc(100vw - 86px)); max-height:calc(100dvh - 282px); }
   .action-rail .button,.action-rail .icon-button,.action-rail .avatar,.action-rail .view-switch button { width:38px; height:38px; min-height:38px; }
   .action-rail .view-switch { gap:12px; }
   .action-rail .button .icon,.action-rail .icon-button .icon,.action-rail .view-switch .icon { width:17px; height:17px; }
@@ -77,3 +77,14 @@ main { width:calc(100% - 240px); max-width:1440px; margin:0 auto; padding:0 52px
 .library-dock { transform:translateX(-50%) scale(1.15); transform-origin:center bottom; max-width:calc((100vw - 150px)/1.15); }
 .floating-search .search,.category-shelf,.library-dock .nav-item { border-radius:999px; }
 @media (max-width:600px) { .library-dock { max-width:calc((100vw - 85px)/1.15); } }
+
+/* A heart-shaped glass bubble is the separate entry to saved materials. */
+.action-rail #favorites-button { position:relative; background:none; border-radius:0; box-shadow:none; backdrop-filter:none; color:#d9e4e6; filter:drop-shadow(0 4px 6px #00000028); }
+#favorites-button::before { content:""; position:absolute; inset:0; clip-path:url(#favorite-bubble-clip); backdrop-filter:blur(12px) saturate(115%); background:#ffffff03; }
+#favorites-button .heart-surface { position:relative; display:block; width:100%; height:100%; }
+.action-rail #favorites-button.active { color:#ff5b73; }
+.favorite-button.selected,#detail-favorite.selected { color:#ff5b73; background:#ff5b7312; }
+.favorite-button.selected .icon path,#detail-favorite.selected .icon path { fill:currentColor; }
+html[data-theme="light"] .action-rail #favorites-button { color:#849a98; }
+html[data-theme="light"] .action-rail #favorites-button.active { color:#e33452; }
+@media (hover:hover) and (pointer:fine) { .action-rail #favorites-button:hover { color:#f2f7f8; } .action-rail #favorites-button.active:hover { color:#ff7c90; } html[data-theme="light"] .action-rail #favorites-button:hover { color:#557572; } html[data-theme="light"] .action-rail #favorites-button.active:hover { color:#e33452; } }

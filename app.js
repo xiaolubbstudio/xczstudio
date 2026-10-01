@@ -650,6 +650,11 @@
       button.classList.toggle('active', selected);
       button.setAttribute('aria-pressed', String(selected));
     });
+    const inFavorites = activeType === 'favorites';
+    $('#favorites-button').classList.toggle('active', inFavorites);
+    $('#favorites-button').setAttribute('aria-pressed', String(inFavorites));
+    $('#favorites-button').setAttribute('aria-label', inFavorites ? '返回全部素材' : '查看收藏');
+    $('#favorites-button').title = inFavorites ? '返回全部素材' : '查看收藏';
   }
 
   function setType(type) { activeType = type; render(); }
@@ -657,6 +662,7 @@
   function updateDetailFavorite() {
     $('#detail-favorite').replaceChildren(icon('heart'), document.createTextNode(favorites.has(activeAsset.id) ? '已收藏' : '收藏'));
     $('#detail-favorite').setAttribute('aria-pressed', String(favorites.has(activeAsset.id)));
+    $('#detail-favorite').classList.toggle('selected', favorites.has(activeAsset.id));
   }
 
   async function downloadOpenList(event, asset) {
@@ -826,6 +832,7 @@
   }
 
   document.querySelectorAll('[data-type]').forEach((button) => button.addEventListener('click', () => setType(button.dataset.type)));
+  $('#favorites-button').addEventListener('click', () => setType(activeType === 'favorites' ? 'all' : 'favorites'));
   $('#search-input').addEventListener('input', render);
   $('#clear-search').addEventListener('click', () => {
     $('#search-input').value = '';
