@@ -12,7 +12,7 @@ const previewUrl = process.env.PREVIEW_URL || 'http://127.0.0.1:4173';
   cloud.config(config);
   const script = await fetch(previewUrl + '/pcloud-client.js');
   assert.equal(script.status, 200);
-  for (const filename of ['auth.html', 'pcloud-auth.js', 'auth-callback.js', 'google-drive-client.js', 'google-drive-auth.js', 'app.js', 'styles.css', 'motion.js', 'motion.css']) {
+  for (const filename of ['auth.html', 'pcloud-auth.js', 'auth-callback.js', 'google-drive-client.js', 'google-drive-auth.js', 'app.js', 'preview-cache.js', 'styles.css', 'motion.js', 'motion.css']) {
     assert.equal((await fetch(previewUrl + '/' + filename)).status, 200);
   }
   assert.equal(config.uploadUrl, undefined);

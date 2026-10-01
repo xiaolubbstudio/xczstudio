@@ -63,6 +63,7 @@
       id: `gdrive-${file.id}`, fileid: file.id, name: file.name, type: typeFor(file), tags: [...tags],
       description: '', member: file.owners?.[0]?.displayName || 'Google Drive',
       date: Number.isNaN(date.getTime()) ? '1970-01-01' : date.toISOString().slice(0, 10),
+      modified: String(file.modifiedTime || file.createdTime || ''),
       sizeMB: file.size != null && Number.isFinite(Number(file.size)) ? Number(file.size) / 1048576 : null,
       previewUrl: cloudUrl(file.thumbnailLink, ['googleusercontent.com']), embedUrl: fileUrl(file, true),
       sourceUrl: source.href, downloadUrl: cloudUrl(file.webContentLink, ['drive.google.com', 'drive.usercontent.google.com', 'googleusercontent.com']) || fileUrl(file),

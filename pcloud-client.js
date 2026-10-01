@@ -66,7 +66,7 @@
         const date = new Date(file.modified || file.created);
         // Omitting crop preserves the entire image, including portrait artwork.
         const thumb = (size) => file.thumb ? `${settings.base}/getpubthumb?${new URLSearchParams({ code: settings.folder.code, fileid: String(file.fileid), size })}` : '';
-        assets.push({ id: `pcloud-${settings.region}-${file.fileid}`, fileid: file.fileid, name: file.name, type: typeFor(file), tags: path, description: path.length ? `所在文件夹：${path.join(' / ')}` : '已自动从 pCloud 读取，无需手动登记。', member: 'pCloud', date: Number.isNaN(date.getTime()) ? '1970-01-01' : date.toISOString().slice(0, 10), sizeMB: typeof file.size === 'number' ? file.size / 1048576 : null, previewUrl: thumb('640x360'), detailPreviewUrl: thumb('1024x1024'), sourceUrl: settings.folder.url, demo: false, cloud: true });
+        assets.push({ id: `pcloud-${settings.region}-${file.fileid}`, fileid: file.fileid, name: file.name, type: typeFor(file), tags: path, description: path.length ? `所在文件夹：${path.join(' / ')}` : '已自动从 pCloud 读取，无需手动登记。', member: 'pCloud', date: Number.isNaN(date.getTime()) ? '1970-01-01' : date.toISOString().slice(0, 10), modified: String(file.modified || file.created || ''), sizeMB: typeof file.size === 'number' ? file.size / 1048576 : null, previewUrl: thumb('640x360'), detailPreviewUrl: thumb('1024x1024'), sourceUrl: settings.folder.url, demo: false, cloud: true });
       }
     }
     visit(metadata, [], 0);

@@ -71,7 +71,7 @@
         if (file.is_dir) { queue.push({ path, label: join(folder.label, file.name) }); continue; }
         if (assets.length >= 5000) throw new Error('素材超过 5000 份，请缩小目录范围。');
         const assetType = type(file.name);
-        assets.push({ id: 'ol-' + path, path, name: file.name, type: assetType, folder: folder.label.replace(/^\//, '') || '根目录', tags: folder.label.split('/').filter(Boolean), description: '', member: '', date: String(file.modified || '').slice(0, 10), sizeMB: Number(file.size) / 1048576, cloud: true, provider: 'openlist', previewUrl: assetType === 'image' ? mediaUrl(file.thumb, input) : '', sourceUrl: '' });
+        assets.push({ id: 'ol-' + path, path, name: file.name, type: assetType, folder: folder.label.replace(/^\//, '') || '根目录', tags: folder.label.split('/').filter(Boolean), description: '', member: '', date: String(file.modified || '').slice(0, 10), modified: String(file.modified || ''), sizeMB: Number(file.size) / 1048576, cloud: true, provider: 'openlist', previewUrl: mediaUrl(file.thumb, input), sourceUrl: '' });
       }
     }
     return { assets, folderId: settings.folderPath, name: '素材库' };

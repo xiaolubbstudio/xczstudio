@@ -12,7 +12,7 @@ http.createServer((request, response) => {
   let relative;
   try { relative = decodeURIComponent(new URL(request.url, 'http://localhost').pathname).replace(/^\/+/, '') || 'index.html'; }
   catch { response.writeHead(400); response.end(); return; }
-  const allowed = ['index.html', 'auth.html', 'styles.css', 'motion.css', 'motion.js', 'app.js', 'pcloud-auth.js', 'auth-callback.js', 'pcloud-client.js', 'google-drive-client.js', 'google-drive-auth.js', 'openlist-client.js', 'openlist-auth.js', 'data/catalog.js', '.nojekyll'].includes(relative) || relative.startsWith('assets/');
+  const allowed = ['index.html', 'auth.html', 'styles.css', 'motion.css', 'motion.js', 'app.js', 'preview-cache.js', 'pcloud-auth.js', 'auth-callback.js', 'pcloud-client.js', 'google-drive-client.js', 'google-drive-auth.js', 'openlist-client.js', 'openlist-auth.js', 'data/catalog.js', 'data/previews.js', '.nojekyll'].includes(relative) || relative.startsWith('assets/');
   const target = path.resolve(root, relative);
   if (!allowed || !target.startsWith(root + path.sep) || relative.includes('..') || relative.includes('\\')) { response.writeHead(404); response.end('Not found'); return; }
   fs.stat(target, (error, stat) => {

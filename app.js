@@ -14,6 +14,13 @@
   let activeType = 'all';
   let activeView = 'grid';
   let activeAsset = null;
+  let previewRequest = null;
+  let previewObjectUrls = [];
+  function stopPreview() {
+    previewRequest?.abort(); previewRequest = null;
+    $('#detail-preview').querySelectorAll('video,audio').forEach(media => { media.pause(); media.removeAttribute('src'); media.load(); });
+    previewObjectUrls.forEach(url => URL.revokeObjectURL(url)); previewObjectUrls = [];
+  }
   let storageWarning = '';
   let pendingChange = null;
   let cloudAssets = [];
@@ -181,6 +188,7 @@
   });
   $('#member-recheck').addEventListener('click', refreshMember);
   $('#member-logout').addEventListener('click', async () => {
+    stopPreview(); activeAsset = null; $('#detail-preview').replaceChildren();
     uploadRequest?.abort();
     memberRequest?.abort(); memberRequest = null;
     let logoutError = '';
@@ -408,15 +416,9 @@
     card.dataset.id = asset.id;
     const preview = element('button', 'preview-button');
     preview.setAttribute('aria-label', `预览 ${asset.name}`);
+    // 列表只显示图标；滚动、筛选、收藏都不会请求素材或缩略图。
     if (asset.type === 'audio') preview.append(audioArt());
-    else if (asset.previewUrl && (asset.cloud || /\.(svg|png|jpe?g|webp|gif)(?:[?#]|$)/i.test(asset.previewUrl))) {
-      const image = element('img');
-      image.src = asset.previewUrl;
-      image.alt = asset.name;
-      image.loading = 'lazy';
-      image.addEventListener('error', () => { image.replaceWith(fallback(asset.type, '预览暂时不可用')); }, { once: true });
-      preview.append(image);
-    } else preview.append(fallback(asset.type, asset.cloud ? '点击预览' : asset.previewUrl ? '点击播放预览' : '暂无预览'));
+    else preview.append(fallback(asset.type, '点击预览'));
     const ext = asset.name.split('.').pop();
     preview.append(element('span', 'card-type', /^[a-z0-9]{1,6}$/i.test(ext) ? ext.toUpperCase() : TYPES[asset.type]));
     preview.addEventListener('click', () => openDetail(asset));
@@ -524,6 +526,9 @@
   }
 
   async function openDetail(asset) {
+    stopPreview();
+    const controller = new AbortController(); previewRequest = controller;
+    const input = { ...catalog.config }, session = memberSession();
     activeAsset = asset;
     $('#detail-type').textContent = `${TYPES[asset.type]}${asset.demo ? ' / 项目演示' : ` / ${cloudName()} 原文件`}`;
     $('#detail-name').textContent = asset.name;
@@ -532,37 +537,7 @@
     $('#detail-meta').replaceChildren(element('span', '', `上传成员：${asset.member || '未署名'}`), element('span', '', `添加日期：${asset.date}`), element('span', '', fileSize(asset)));
     const preview = $('#detail-preview');
     preview.replaceChildren();
-    let url = safeUrl(asset.detailPreviewUrl || asset.previewUrl);
-    if (asset.provider === 'openlist') {
-      preview.append(fallback(asset.type, '正在读取预览…'));
-      $('#detail-download').hidden = true;
-      $('#detail-source').hidden = true;
-      $('#detail-note').textContent = '';
-      updateDetailFavorite();
-      window.StudioMotion.open($('#detail-dialog'));
-      try { url = await window.OpenListClient.resolve(catalog.config, asset, AbortSignal.timeout(20000)); }
-      catch (error) { if (activeAsset === asset) toast(error.message); }
-      if (activeAsset !== asset) return;
-      preview.replaceChildren();
-    }
-    if (asset.provider === 'google') {
-      const frame = element('iframe', 'drive-preview');
-      frame.src = asset.embedUrl;
-      frame.title = `预览 ${asset.name}`;
-      frame.allow = 'fullscreen';
-      frame.referrerPolicy = 'strict-origin-when-cross-origin';
-      preview.append(frame);
-    } else if (!url) preview.append(fallback(asset.type, asset.provider === 'openlist' ? '暂无预览' : '在 pCloud 预览'));
-    else {
-      const audio = (!asset.cloud || asset.provider === 'openlist') && asset.type === 'audio';
-      const video = (!asset.cloud && /\.(mp4|webm)(?:[?#]|$)/i.test(url)) || asset.provider === 'openlist' && asset.type === 'video';
-      const media = element(audio ? 'audio' : video ? 'video' : 'img');
-      if (audio || video) { media.controls = true; media.preload = 'metadata'; media.setAttribute('playsinline', ''); }
-      else media.alt = asset.name;
-      media.src = url;
-      media.addEventListener('error', () => { preview.replaceChildren(fallback(asset.type, '预览不可用')); }, { once: true });
-      preview.append(media);
-    }
+    preview.append(fallback(asset.type, '正在读取预览…'));
     const download = $('#detail-download');
     download.hidden = false;
     download.href = asset.cloud ? cloudClient().downloadUrl(catalog.config, asset) : safeUrl(asset.sourceUrl);
@@ -575,10 +550,63 @@
     download.onclick = asset.provider === 'openlist' ? event => downloadOpenList(event, asset) : asset.cloud ? () => toast(asset.provider === 'google' ? '已发起原文件下载' : '已发起 ZIP 下载') : null;
     if (asset.demo) download.setAttribute('download', asset.sourceUrl.split('/').pop());
     else download.removeAttribute('download');
-    $('#detail-note').textContent = asset.provider === 'openlist' ? (asset.type === 'video' ? '仅支持当前浏览器可解码的视频；MOV 等文件仍可下载原件。' : '') : asset.demo ? '项目演示文件。' : asset.provider === 'google' ? '下载保留原格式。Google 可能要求确认；预览失败可在 Drive 打开。' : asset.cloud ? 'ZIP 内为原文件，下载后解压。' : '';
+    $('#detail-note').textContent = '';
     updateDetailFavorite();
-    if (!$('#detail-dialog').open) window.StudioMotion.open($('#detail-dialog'));
+    window.StudioMotion.open($('#detail-dialog'));
     $('#detail-dialog').scrollTop = 0;
+    const current = () => !controller.signal.aborted && activeAsset === asset && catalog.config.folderUrl === input.folderUrl && catalog.config.provider === input.provider && (!isOpenList() || memberSession()?.token === session?.token);
+    const scope = [input.provider || 'pcloud', input.folderUrl || '', input.folderPath || '/', session?.username || session?.uid || 'public'];
+    async function loadPart(part, resolveUrl, kind, limit, onProgress) {
+      if (asset.provider === 'openlist' && !session) throw new Error('请先登录素材库');
+      const result = await window.StudioPreviewCache.load([...scope, asset.id, asset.modified || asset.date, asset.sizeMB, part, 'original-v1'], resolveUrl, { signal: controller.signal, kind, limit, onProgress });
+      if (!current()) return null;
+      const url = URL.createObjectURL(result.blob); previewObjectUrls.push(url);
+      $('#detail-note').textContent = result.cached ? '本机缓存' : result.persistent ? '预览已缓存到本机' : '预览仅缓存于本次页面';
+      return url;
+    }
+    const imageSource = () => asset.provider === 'openlist' && asset.type === 'image' ? window.OpenListClient.resolve(input, asset, controller.signal) : safeUrl(asset.detailPreviewUrl || asset.previewUrl);
+    const originalSource = () => asset.provider === 'openlist' ? window.OpenListClient.resolve(input, asset, controller.signal) : !asset.cloud ? safeUrl(asset.previewUrl) : '';
+    try {
+      if (asset.type === 'video') {
+        const stage = element('div', 'preview-stage');
+        preview.replaceChildren(stage);
+        try {
+          const poster = await loadPart('poster', () => safeUrl(asset.previewUrl), 'image', 1048576);
+          if (!current()) return;
+          if (poster) { const image = element('img'); image.src = poster; image.alt = `${asset.name} 缩略图`; stage.append(image); }
+        } catch (error) { if (controller.signal.aborted) return; }
+        if (!current()) return;
+        if (!stage.children.length) stage.append(fallback('video', '暂无缩略图'));
+        const extension = asset.name.split('.').pop().toLowerCase();
+        // MOV / ProRes 和 MKV 的浏览器兼容性不足，不为试播下载整份大原件。
+        const nativeVideo = ['mp4', 'webm', 'm4v'].includes(extension) && (asset.provider === 'openlist' || !asset.cloud) && (!asset.sizeMB || asset.sizeMB <= 512);
+        if (nativeVideo) {
+          const play = element('button', 'button primary preview-play', '▷ 播放原画质');
+          play.title = '首次播放先缓存原视频，完成后播放；关闭预览可停止加载。';
+          stage.append(play);
+          play.addEventListener('click', async () => {
+            play.disabled = true; play.textContent = '正在缓存原视频…';
+            try {
+              const url = await loadPart('video', originalSource, 'video', 512 * 1048576, (bytes, total) => {
+                if (current()) play.textContent = total ? `正在缓存原视频 ${Math.floor(bytes / total * 100)}%` : `正在缓存原视频 ${(bytes / 1048576).toFixed(1)} MB`;
+              });
+              if (!current() || !url) return;
+              const video = element('video'); video.src = url; video.controls = true; video.preload = 'none'; video.setAttribute('playsinline', '');
+              video.addEventListener('error', () => { if (current()) preview.replaceChildren(fallback('video', '浏览器不支持此编码 · 可下载原文件')); }, { once: true });
+              stage.replaceChildren(video); video.play().catch(() => {});
+            } catch (error) { if (current()) { play.disabled = false; play.textContent = '重试原画质预览'; toast(error.message); } }
+          });
+        } else stage.append(element('span', 'preview-caption', ['mov', 'mkv'].includes(extension) ? '此格式需下载后播放' : asset.sizeMB > 512 ? '超过本机预览上限 · 可下载原文件' : '仅显示缩略图 · 可下载原文件'));
+      } else {
+        const audio = asset.type === 'audio';
+        const url = await loadPart(audio ? 'audio' : 'image', audio ? originalSource : imageSource, audio ? 'audio' : 'image', 20 * 1048576);
+        if (!current()) return;
+        const media = element(audio ? 'audio' : 'img'); media.src = url;
+        if (audio) { media.controls = true; media.preload = 'none'; } else media.alt = asset.name;
+        media.addEventListener('error', () => { if (current()) preview.replaceChildren(fallback(asset.type, '预览不可用')); }, { once: true });
+        preview.replaceChildren(media);
+      }
+    } catch (error) { if (current()) { preview.replaceChildren(fallback(asset.type, '暂无预览')); $('#detail-note').textContent = error.message; } }
   }
 
   function openSettings(message = '') {
@@ -646,9 +674,10 @@
   }));
   document.querySelectorAll('dialog').forEach((dialog) => {
     dialog.addEventListener('close', () => {
+      if (dialog.open) return; // 快速重新打开时，旧的 close 事件不能清空新预览。
       dialog.querySelectorAll('audio,video').forEach((media) => { media.pause(); media.removeAttribute('src'); media.load(); });
       if (dialog.id === 'member-dialog') { $('#openlist-password').value = ''; $('#openlist-otp').value = ''; }
-      if (dialog.id === 'detail-dialog') { activeAsset = null; $('#detail-preview').replaceChildren(); }
+      if (dialog.id === 'detail-dialog') { stopPreview(); activeAsset = null; $('#detail-preview').replaceChildren(); }
     });
   });
   document.addEventListener('keydown', (event) => {
