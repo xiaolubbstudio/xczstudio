@@ -72,3 +72,8 @@ main { width:calc(100% - 240px); max-width:1440px; margin:0 auto; padding:0 52px
 }
 @media (prefers-reduced-motion:reduce) { .library-dock { transition:opacity 80ms linear; translate:none; } }
 @media (prefers-reduced-motion:reduce) { .tools-menu { transition:none; transform:none; } }
+
+/* Enlarge both floating controls together; keep their capsule curves identical. */
+.library-dock { transform:translateX(-50%) scale(1.15); transform-origin:center bottom; max-width:calc((100vw - 150px)/1.15); }
+.floating-search .search,.category-shelf,.library-dock .nav-item { border-radius:999px; }
+@media (max-width:600px) { .library-dock { max-width:calc((100vw - 85px)/1.15); } }
