@@ -84,7 +84,6 @@ main { width:calc(100% - 240px); max-width:1440px; margin:0 auto; padding:0 52px
 #favorites-button .heart-surface { position:relative; display:block; width:100%; height:100%; }
 .action-rail #favorites-button.active { color:#ff5b73; }
 .favorite-button.selected,#detail-favorite.selected { color:#ff5b73; background:#ff5b7312; }
-.favorite-button.selected .icon path,#detail-favorite.selected .icon path { fill:currentColor; }
 html[data-theme="light"] .action-rail #favorites-button { color:#849a98; }
 html[data-theme="light"] .action-rail #favorites-button.active { color:#e33452; }
 @media (hover:hover) and (pointer:fine) { .action-rail #favorites-button:hover { color:#f2f7f8; } .action-rail #favorites-button.active:hover { color:#ff7c90; } html[data-theme="light"] .action-rail #favorites-button:hover { color:#557572; } html[data-theme="light"] .action-rail #favorites-button.active:hover { color:#e33452; } }

@@ -408,7 +408,7 @@
     const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
     svg.classList.add('icon'); svg.setAttribute('aria-hidden','true');
     const use = document.createElementNS('http://www.w3.org/2000/svg','use');
-    use.setAttribute('href', `assets/ui-icons.svg?v=20261002-symbols1#${name}`); svg.append(use);
+    use.setAttribute('href', `assets/ui-icons.svg?v=20261002-favorites1#${name}`); svg.append(use);
     return svg;
   }
   function decorateChrome() {
@@ -531,7 +531,7 @@
 
   function favoriteLabel(button, asset) {
     const selected = favorites.has(asset.id);
-    button.replaceChildren(icon('heart'));
+    button.replaceChildren(icon(selected ? 'heart-filled' : 'heart'));
     button.classList.toggle('selected', selected);
     button.setAttribute('aria-label', `${selected ? '取消收藏' : '收藏'} ${asset.name}`);
     button.setAttribute('aria-pressed', String(selected));
@@ -660,7 +660,7 @@
   function setType(type) { activeType = type; render(); }
 
   function updateDetailFavorite() {
-    $('#detail-favorite').replaceChildren(icon('heart'), document.createTextNode(favorites.has(activeAsset.id) ? '已收藏' : '收藏'));
+    $('#detail-favorite').replaceChildren(icon(favorites.has(activeAsset.id) ? 'heart-filled' : 'heart'), document.createTextNode(favorites.has(activeAsset.id) ? '已收藏' : '收藏'));
     $('#detail-favorite').setAttribute('aria-pressed', String(favorites.has(activeAsset.id)));
     $('#detail-favorite').classList.toggle('selected', favorites.has(activeAsset.id));
   }
