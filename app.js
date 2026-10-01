@@ -19,16 +19,24 @@
     const signatureHit = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     if (!link.classList.contains('logo-english-back')) signatureHit.setAttribute('clip-path', 'url(#woven)');
     signatureHit.append(signature);
-    hit.append(signatureHit, logoSvg.querySelector('#logo-thread > path').cloneNode(true));
-    for (const path of hit.querySelectorAll('path')) {
+    hit.append(signatureHit);
+    for (const path of signatureHit.querySelectorAll('path')) {
       path.setAttribute('fill', 'transparent');
       path.setAttribute('stroke', 'transparent');
-      path.setAttribute('stroke-width', '10');
+      path.setAttribute('stroke-width', '6');
       path.setAttribute('stroke-linejoin', 'round');
       path.setAttribute('stroke-linecap', 'round');
       path.setAttribute('vector-effect', 'non-scaling-stroke');
       path.setAttribute('pointer-events', 'all');
     }
+    // An open flourish must only catch its stroke, never its implicitly closed interior.
+    const flourishHit = logoSvg.querySelector('#logo-thread > path').cloneNode(true);
+    flourishHit.setAttribute('fill', 'none');
+    flourishHit.setAttribute('stroke', 'transparent');
+    flourishHit.setAttribute('stroke-width', '3');
+    flourishHit.setAttribute('vector-effect', 'non-scaling-stroke');
+    flourishHit.setAttribute('pointer-events', 'stroke');
+    hit.append(flourishHit);
     link.append(hit);
   }
   function applyTheme(theme) {
