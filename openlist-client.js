@@ -92,6 +92,8 @@
   async function profile(input, session, signal) {
     const user = await request(input, 'me', undefined, session, signal);
     if (!user || ![0, 2].includes(user.role) || user.disabled || user.username !== session.username) { const error = new Error('此账号无法作为素材库成员使用。'); error.code = 401; throw error; }
+    session.role = user.role;
+    await root.OpenListAuth?.renewIfNeeded(input, session, signal);
     return { name: user.username, avatarUrl: '', permission: user.permission, role: user.role };
   }
   async function memberAccess(input, session, signal) {

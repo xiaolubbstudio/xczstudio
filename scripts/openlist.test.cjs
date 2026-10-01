@@ -4,9 +4,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const input = { provider: 'openlist', folderUrl: 'https://library.example.test/', folderPath: '/' };
-function browser(fetch) {
+function browser(fetch, persistent = new Map()) {
   const memory = new Map();
   const scope = { URL, Date, AbortSignal, Uint8Array, crypto: require("node:crypto").webcrypto, sessionStorage: { getItem: key => memory.get(key), setItem: (key, value) => memory.set(key, value), removeItem: key => memory.delete(key) }, fetch };
+  scope.localStorage = { getItem: key => persistent.get(key), setItem: (key, value) => persistent.set(key, value), removeItem: key => persistent.delete(key) };
   scope.window = scope;
   vm.createContext(scope);
   for (const name of ['openlist-client.js', 'openlist-auth.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', name), 'utf8'), scope);
@@ -14,7 +15,7 @@ function browser(fetch) {
 }
 const response = (data, code = 200) => ({ ok: code === 200, status: code, json: async () => ({ code, data }) });
 
-test('remembered username is scoped to the connection; persistent storage never receives the session', async () => {
+test('remembered username is scoped to the connection; persistence saves a session but never a password', async () => {
   const b = browser(async url => response(url.endsWith('/login') ? { token: 'fixture-private-token' } : { username: 'member01', role: 0 }));
   const saved = new Map();
   b.localStorage = { getItem: key => saved.get(key), setItem: (key, value) => saved.set(key, value), removeItem: key => saved.delete(key) };
@@ -22,9 +23,10 @@ test('remembered username is scoped to the connection; persistent storage never 
   await b.OpenListAuth.begin(input, 'member01', 'fixture-private-password');
   assert.equal(b.OpenListAuth.remembered(input), 'member01');
   assert.equal(b.OpenListAuth.remembered({ ...input, folderUrl: 'https://other.example.test/' }), '');
-  assert.deepEqual([...saved.values()], ['member01']);
+  assert.equal(saved.get('studio-openlist-session-v1').includes('fixture-private-password'), false);
+  assert.ok(saved.get('studio-openlist-session-v1').includes('fixture-private-token'));
   b.OpenListAuth.remember(input, '');
-  assert.equal(saved.size, 0);
+  assert.equal(saved.size, 1);
   assert.ok(b.OpenListAuth.get(input));
 });
 
@@ -41,7 +43,7 @@ test('five independent browser sessions stay signed in; logout revokes only that
       if (body.password !== 'fixture-password') return response(null, 401);
       const token = 'fixture-' + body.username;
       active.set(token, body.username);
-      return response({ token });
+      return response({ token, expires_at: Math.floor(Date.now()/1000) + 180*86400 });
     }
     const username = active.get(options.headers.Authorization);
     if (!username) return response(null, 401);
@@ -73,11 +75,12 @@ test('wrong password, guest and mismatched identity cannot persist a member sess
 
 test('sessions are bound to backend and directory and expire locally', () => {
   const b = browser();
-  const now = Date.now(), s = { token: 'fixture', username: 'member', endpoint: 'https://library.example.test', folderPath: '/', created: now };
+  const now = Date.now(), s = { token: 'fixture', username: 'member', endpoint: 'https://library.example.test', folderPath: '/', created: now, expires: now + 180 * 86400000 };
   assert.equal(b.OpenListAuth.validSession(s, input, now), true);
   assert.equal(b.OpenListAuth.validSession(s, { ...input, folderUrl: 'https://other.example.test/' }, now), false);
   assert.equal(b.OpenListAuth.validSession(s, { ...input, folderPath: '/other' }, now), false);
-  assert.equal(b.OpenListAuth.validSession(s, input, now + 8 * 3600000), false);
+  assert.equal(b.OpenListAuth.validSession(s, input, now + 179 * 86400000), true);
+  assert.equal(b.OpenListAuth.validSession(s, input, now + 180 * 86400000), false);
   assert.equal(b.OpenListAuth.validSession({ ...s, token: 'fixture\nInjected' }, input, now), false);
 });
 
@@ -244,4 +247,64 @@ test('expired Access session yields a recoverable validation message instead of 
     const b=browser(async ()=>result);
     await assert.rejects(b.OpenListClient.request(input,'me'),e=>e.code==='ACCESS_REQUIRED');
   }
+});
+
+test('browser restart restores the session; same account on another device stays signed in after logout', async () => {
+  let counter = 0;
+  const active = new Set();
+  const api = async (url, options) => {
+    if (url.endsWith('/login')) { const token = 'device-' + ++counter; active.add(token); return response({token,expires_at:Math.floor(Date.now()/1000)+180*86400}); }
+    const token = options.headers.Authorization;
+    if (!active.has(token)) return response(null,401);
+    if (url.endsWith('/logout')) { active.delete(token); return response(null); }
+    return response({username:'member',role:0,permission:8});
+  };
+  const saved = new Map();
+  const desktop = browser(api, saved), phone = browser(api);
+  await desktop.OpenListAuth.begin(input,'member','password');
+  await phone.OpenListAuth.begin(input,'member','password');
+  const reopened = browser(api, saved);
+  assert.equal(reopened.OpenListAuth.get(input).token, desktop.OpenListAuth.get(input).token);
+  await reopened.OpenListAuth.logout(input);
+  assert.equal(desktop.OpenListAuth.get(input),null); // Other tabs cannot resurrect the logged-out session.
+  await phone.OpenListClient.profile(input,phone.OpenListAuth.get(input));
+  assert.equal(active.size,1);
+});
+
+test('active member renews near expiry once, without passwords, polling, or overwriting logout', async () => {
+  let calls=0, finish;
+  const b=browser(async (url, options)=>{
+    calls++;
+    assert.ok(url.endsWith('/refresh'));
+    assert.equal(options.body,'{}');
+    return new Promise(resolve=>{finish=()=>resolve(response({token:'renewed',expires_at:Math.floor(Date.now()/1000)+180*86400}));});
+  });
+  const stored={endpoint:'https://library.example.test',folderPath:'/',username:'member',role:0,token:'old',created:Date.now()-155*86400000,expires:Date.now()+25*86400000};
+  const key='studio-openlist-session-v1';
+  b.localStorage.setItem(key,JSON.stringify(stored));
+  const one=b.OpenListAuth.renewIfNeeded(input,b.OpenListAuth.get(input));
+  const two=b.OpenListAuth.renewIfNeeded(input,b.OpenListAuth.get(input));
+  finish(); await Promise.all([one,two]);
+  assert.equal(calls,1); assert.equal(b.OpenListAuth.get(input).token,'renewed');
+  await b.OpenListAuth.renewIfNeeded(input,b.OpenListAuth.get(input));
+  assert.equal(calls,1);
+  b.localStorage.setItem(key,JSON.stringify(stored));
+  const pending=b.OpenListAuth.renewIfNeeded(input,b.OpenListAuth.get(input));
+  await b.OpenListAuth.logout();
+  finish(); await pending;
+  assert.equal(b.OpenListAuth.get(input),null);
+});
+
+test('legacy tab session migrates without passwords; blocked persistent storage falls back to the tab', async () => {
+  const b=browser(async url=>response(url.endsWith('/login')?{token:'fixture',expires_at:Math.floor(Date.now()/1000)+180*86400}:{username:'member',role:0}));
+  const key='studio-openlist-session-v1';
+  const legacy={endpoint:'https://library.example.test',folderPath:'/',username:'member',token:'fixture',created:Date.now()};
+  b.sessionStorage.setItem(key,JSON.stringify(legacy));
+  assert.equal(b.OpenListAuth.get(input).username,'member');
+  assert.ok(b.localStorage.getItem(key));
+  b.localStorage={getItem(){throw Error('blocked')},setItem(){throw Error('blocked')},removeItem(){throw Error('blocked')}};
+  await b.OpenListAuth.begin(input,'member','password');
+  assert.ok(b.OpenListAuth.get(input));
+  await b.OpenListAuth.logout();
+  assert.equal(b.OpenListAuth.get(input),null);
 });
