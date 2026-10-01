@@ -46,6 +46,9 @@
 !/assets/Phosphor-LICENSE.txt
 
 !/openlist-client.js
+!/upload-drop.js
+!/fluent.css
+!/scripts/upload-drop.test.cjs
 !/openlist-auth.js
 !/scripts/openlist.test.cjs
 !/scripts/preview-cache.test.cjs

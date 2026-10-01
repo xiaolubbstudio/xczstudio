@@ -217,7 +217,7 @@
       $('#member-info').textContent = member ? `${member.name} · 已登录` : signedIn ? '正在核实账号…' : '请使用你的素材库成员账号。';
       $('#member-status').textContent = message || (memberBusy ? '核实账号中…' : signedIn && !member?.canUpload ? '此账号没有上传权限' : '');
     }
-    $('#upload-button').replaceChildren(icon('file-upload'), document.createTextNode('上传素材'));
+    $('#upload-button').replaceChildren(icon('file-upload'));
     $('#upload-button').setAttribute('aria-label', '上传素材');
     $('#upload-button').title = '上传素材';
   }
@@ -343,18 +343,19 @@
     window.StudioMotion.open($('#upload-dialog'));
   }
 
-  function addUploadFiles(event) {
-    if (uploading) return;
-    const files = [...event.target.files];
+  function enqueueUploads(files) {
     uploadQueue = uploadQueue.filter(item => !item.done);
-    for (const file of files) {
-      const relativePath = file.webkitRelativePath || file.name;
+    for (const { file, relativePath } of files) {
       if (uploadQueue.some(item => item.relativePath === relativePath && item.file.size === file.size && item.file.lastModified === file.lastModified)) continue;
       uploadQueue.push({ file, relativePath, done: false, status: `${file.size < 1048576 ? `${Math.ceil(file.size / 1024)} KB` : `${(file.size / 1048576).toFixed(1)} MB`} · 等待上传` });
     }
-    event.target.value = '';
     $('#upload-message').textContent = `${uploadQueue.length} 个文件待上传`;
     renderQueue();
+  }
+  function addUploadFiles(event) {
+    if (uploading) return;
+    enqueueUploads([...event.target.files].map(file => ({ file, relativePath: file.webkitRelativePath || file.name })));
+    event.target.value = '';
   }
   $('#upload-files').addEventListener('change', addUploadFiles);
   $('#upload-folder').addEventListener('change', addUploadFiles);
@@ -394,7 +395,56 @@
   });
   $('#upload-cancel').addEventListener('click', () => uploadRequest?.abort());
   $('#upload-dialog').addEventListener('cancel', (event) => { if (uploading) { event.preventDefault(); $('#upload-message').textContent = '请先点击“停止上传”，再关闭窗口。'; } });
-  $('#refresh-button').addEventListener('click', () => { if (!isCloud()) openSettings('请连接素材文件夹。'); else { toast('正在刷新素材…'); refreshCloud(true); } });
+  $('#refresh-button').addEventListener('click', () => { if (!isCloud()) toast('素材库尚未连接，请联系管理员。'); else { toast('正在刷新素材…'); refreshCloud(true); } });
+
+  const dropOverlay = $('#drop-overlay');
+  let dragDepth = 0, readingDrop = false;
+  function hideDrop() {
+    dragDepth = 0;
+    if (!readingDrop) { dropOverlay.hidden = true; document.body.classList.remove('is-file-dragging'); }
+  }
+  window.addEventListener('dragenter', event => {
+    if (!window.StudioUploadDrop.hasFiles(event.dataTransfer)) return;
+    event.preventDefault(); dragDepth++;
+    dropOverlay.hidden = false; document.body.classList.add('is-file-dragging');
+    $('#drop-label').textContent = uploading ? '正在上传，请稍后添加' : !memberSession() || !member?.canUpload ? '请先登录，再拖入上传' : '松开即可上传文件或文件夹';
+  }, true);
+  window.addEventListener('dragover', event => {
+    if (!window.StudioUploadDrop.hasFiles(event.dataTransfer) && !dragDepth) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = uploading || readingDrop ? 'none' : 'copy';
+  }, true);
+  window.addEventListener('dragleave', event => {
+    if (!dragDepth) return;
+    event.preventDefault();
+    if (--dragDepth <= 0 || (!event.relatedTarget && (event.clientX <= 0 || event.clientY <= 0 || event.clientX >= innerWidth || event.clientY >= innerHeight))) hideDrop();
+  }, true);
+  window.addEventListener('drop', async event => {
+    if (!window.StudioUploadDrop.hasFiles(event.dataTransfer) && !dragDepth) return;
+    event.preventDefault(); event.stopPropagation(); hideDrop();
+    if (uploading || readingDrop) { toast('请等待当前上传完成，再添加文件。'); return; }
+    if (!memberSession() || !member?.canUpload || memberBusy) {
+      if (!memberSession()) member = null;
+      openMember(); toast('登录并获得上传权限后，再拖入文件。'); return;
+    }
+    const session = memberSession();
+    readingDrop = true; dropOverlay.hidden = false;
+    $('#drop-label').textContent = '正在读取文件夹…';
+    try {
+      const files = await window.StudioUploadDrop.collect(event.dataTransfer);
+      if (memberSession()?.token !== session.token || !member?.canUpload) throw new Error('登录已变化，请重新拖入文件。');
+      if (!files.length) { toast('空文件夹没有可上传的文件。'); return; }
+      if (!isOpenList() && files.some(item => item.relativePath.includes('/'))) throw new Error('当前连接不支持文件夹上传。');
+      for (const dialog of document.querySelectorAll('dialog[open]')) {
+        if (dialog.id !== 'upload-dialog') dialog.close();
+      }
+      openUpload(); enqueueUploads(files);
+      $('#upload-start').click();
+    } catch (error) { toast(error.message || '无法读取文件夹，请使用“选择文件夹”重试。'); }
+    finally { readingDrop = false; hideDrop(); }
+  }, true);
+  window.addEventListener('dragend', hideDrop, true);
+  window.addEventListener('blur', hideDrop);
 
   function confirmChange(message, action) {
     pendingChange = action;
@@ -858,7 +908,6 @@
     render();
   }));
   $('#reset-filters').addEventListener('click', () => { $('#search-input').value = ''; $('#folder-filter').value = '*'; setType('all'); });
-  $('#settings-button').addEventListener('click', () => openSettings());
   $('#upload-button').addEventListener('click', openUpload);
   $('#detail-favorite').addEventListener('click', () => toggleFavorite(activeAsset));
   document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => {
