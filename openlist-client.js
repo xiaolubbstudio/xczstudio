@@ -79,7 +79,7 @@
   }
   async function memberAccess(input, session, signal) {
     const data = await directory(input, config(input).folderPath, session, signal);
-    return { canUpload: data.write === true, hasWritePermission: data.write === true };
+    return { canUpload: data.write === true, canManage: data.write === true, hasWritePermission: data.write === true };
   }
   async function resolve(input, asset, signal) {
     if (asset.managed) {

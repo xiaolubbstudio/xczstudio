@@ -839,7 +839,7 @@
     if (manageBusy || uploading) { toast('请先等待当前操作完成。'); return; }
     const dialog = $('#manage-dialog');
     const folderAction = action.startsWith('folder-');
-    const folder = asset.folder === '根目录' ? '' : asset.folder || '';
+    const folder = folderAction ? asset.folder || '' : (asset.tags || []).join('/');
     const current = action === 'folder-create' ? ($('#folder-filter').value === '*' ? '' : JSON.parse($('#folder-filter').value).join('/')) : folder;
     manageIntent = { action, asset, current };
     const names = { rename: '重命名素材', move: '移动素材', trash: '移入回收站', restore: '恢复素材', 'folder-create': '新建文件夹', 'folder-edit': '修改文件夹' };
