@@ -25,7 +25,8 @@
     if (!response.ok || data.code !== 200) {
       // 不把服务端消息中的内部地址、凭据或堆栈回显到网页。
       const code = response.ok ? data.code : response.status;
-      const error = new Error(code === 401 ? '请登录素材库，或重新登录过期的账号。' : code === 403 ? '此账号没有该目录的权限。' : code === 429 ? '请求过于频繁，请稍后重试。' : '云端请求失败，请检查后台连接与权限。');
+      const catalogMessage = route.startsWith('fs/studio_catalog/') && typeof data.message === 'string' && data.message.length < 140 && !/https?:|token|authorization|stack|secret/i.test(data.message) ? data.message : '';
+      const error = new Error(code === 401 ? '请登录素材库，或重新登录过期的账号。' : code === 403 ? '此账号没有该目录的权限。' : code === 429 ? '请求过于频繁，请稍后重试。' : catalogMessage || '云端请求失败，请检查后台连接与权限。');
       error.code = code; throw error;
     }
     return data.data;
@@ -58,25 +59,18 @@
   async function list(input, signal) {
     const settings = config(input), session = sessionFor(input);
     if (!session) { const error = new Error('请先登录素材库。'); error.code = 401; throw error; }
-    const assets = [], queue = [{ path: settings.folderPath, label: '' }], seen = new Set();
-    let access;
-    while (queue.length) {
-      const folder = queue.shift();
-      if (seen.has(folder.path)) continue;
-      if (seen.size >= 100) throw new Error('子目录过多，请缩小素材目录范围。');
-      seen.add(folder.path);
-      const data = await directory(input, folder.path, session, signal);
-      if (folder.path === settings.folderPath) access = { canUpload: data.write === true, hasWritePermission: data.write === true };
-      for (const file of data.content) {
-        if (typeof file.name !== 'string' || !file.name || /[\\/\u0000-\u001f]/.test(file.name) || ['.', '..'].includes(file.name)) throw new Error('云端返回了无效文件名。');
-        const path = join(folder.path, file.name);
-        if (file.is_dir) { queue.push({ path, label: join(folder.label, file.name) }); continue; }
-        if (assets.length >= 5000) throw new Error('素材超过 5000 份，请缩小目录范围。');
-        const assetType = type(file.name);
-        assets.push({ id: 'ol-' + path, path, name: file.name, type: assetType, folder: folder.label.replace(/^\//, '') || '根目录', tags: folder.label.split('/').filter(Boolean), description: '', member: '', date: String(file.modified || '').slice(0, 10), modified: String(file.modified || ''), sizeMB: Number(file.size) / 1048576, cloud: true, provider: 'openlist', previewUrl: mediaUrl(file.thumb, input), sourceUrl: '' });
-      }
-    }
-    return { assets, folderId: settings.folderPath, name: '素材库', access };
+    const data = await manage(input, 'list', {}, signal);
+    if (!Array.isArray(data?.assets) || !Array.isArray(data?.folders) || data.assets.length > 5000) throw new Error('素材管理目录无效。');
+    const assets = data.assets.map(file => {
+      if (typeof file.id !== 'string' || typeof file.name !== 'string' || !file.name || /[\\/\u0000-\u001f]/.test(file.name) || typeof file.folder !== 'string') throw new Error('云端返回了无效素材。');
+      return { id: file.id, name: file.name, type: type(file.name), folder: file.folder || '根目录', tags: file.folder.split('/').filter(Boolean), description: '', member: '', date: String(file.modified || '').slice(0, 10), modified: String(file.modified || ''), sizeMB: Number(file.size) / 1048576, cloud: true, provider: 'openlist', managed: true, deleted: !!file.deleted, pending: !!file.pending, revision: file.revision, previewUrl: mediaUrl(file.thumb, input), sourceUrl: '' };
+    });
+    const access = { canUpload: data.canManage === true, canManage: data.canManage === true, hasWritePermission: data.canManage === true };
+    return { assets, folders: data.folders, folderId: settings.folderPath, name: '素材库', access };
+  }
+  async function manage(input, action, body = {}, signal) {
+    if (!['list', 'edit', 'trash', 'restore', 'folder', 'resolve'].includes(action)) throw new Error('素材操作无效。');
+    return request(input, 'fs/studio_catalog/' + action, { ...body, path: config(input).folderPath }, sessionFor(input), signal);
   }
   async function profile(input, session, signal) {
     const user = await request(input, 'me', undefined, session, signal);
@@ -88,6 +82,12 @@
     return { canUpload: data.write === true, hasWritePermission: data.write === true };
   }
   async function resolve(input, asset, signal) {
+    if (asset.managed) {
+      const data = await manage(input, 'resolve', { id: asset.id }, signal);
+      const url = mediaUrl(data?.raw_url, input);
+      if (!url) throw new Error('后台没有提供原文件下载地址。');
+      return url;
+    }
     const base = config(input).folderPath;
     if (!(asset.path.startsWith((base === '/' ? '' : base) + '/')) || asset.path.split('/').some(x => ['.', '..'].includes(x))) throw new Error('文件不在素材目录内。');
     const data = await request(input, 'fs/get', { path: asset.path, password: '' }, sessionFor(input), signal);
@@ -136,8 +136,8 @@
     bytes = null;
     const sha256 = Array.from(new Uint8Array(digest), n => n.toString(16).padStart(2, '0')).join('');
     signal?.throwIfAborted();
-    await ensureUploadFolders(input, destinationFolder.folders, session, signal, folderCache);
-    const start = await request(input, 'fs/studio_upload/start', { path: destinationFolder.path, name: file.name, size: file.size, sha256 }, session, signal);
+    const virtualFolder = [...(folderCache.virtualBase || []), ...destinationFolder.folders].join('/');
+    const start = await request(input, 'fs/studio_upload/start', { path: config(input).folderPath, name: file.name, size: file.size, sha256, virtual_folder: virtualFolder }, session, signal);
     if (!start?.ticket || start.chunkSize !== 8 * 1048576) throw new Error('后台未返回有效上传会话。');
     for (let offset = 0, part = 1; !start.ready && offset < file.size; offset += start.chunkSize, part++) {
       signal?.throwIfAborted();
@@ -159,7 +159,7 @@
     progress?.(100);
     return result;
   }
-  const api = { config, request, mediaUrl, list, directory, profile, memberAccess, resolve, downloadUrl, uploadLocation, upload };
+  const api = { config, request, mediaUrl, list, manage, directory, profile, memberAccess, resolve, downloadUrl, uploadLocation, upload };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.OpenListClient = api;
 })(typeof window === 'undefined' ? globalThis : window);

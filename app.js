@@ -3,7 +3,7 @@
 
   const $ = (selector) => document.querySelector(selector);
   const TYPES = { image: '图片', video: '视频', audio: '音频', animation: '动画', other: '其他' };
-  const TITLES = { all: '全部素材', image: '图片与背景', video: '视频素材', audio: '音效与音乐', animation: '动画与元素', other: '其他文件', favorites: '我的收藏' };
+  const TITLES = { all: '全部素材', image: '图片与背景', video: '视频素材', audio: '音效与音乐', animation: '动画与元素', other: '其他文件', favorites: '我的收藏', trash: '回收站' };
   const STORAGE_KEY = 'orange-library-catalog-v1';
   const FAVORITES_KEY = 'orange-library-favorites-v1';
   const VIEW_KEY = 'orange-library-view-v1';
@@ -85,6 +85,7 @@
   let storageWarning = '';
   let pendingChange = null;
   let cloudAssets = [];
+  let cloudFolders = [];
   let cloudBusy = false;
   let cloudRequest = null;
   let uploadRequest = null;
@@ -103,7 +104,7 @@
   const memberSession = () => cloudAuth().get(catalog.config);
   const memberSettings = () => ({ ...catalog.config, folderId: cloudFolderId });
   const isCloud = () => Boolean(catalog.config.folderUrl);
-  const allAssets = () => isCloud() ? cloudAssets : catalog.assets;
+  const allAssets = () => (isCloud() ? cloudAssets : catalog.assets).filter(asset => activeType === 'trash' ? asset.deleted : !asset.deleted);
 
   // 卡片只读目录已有的缩略图地址，不解析原文件；跨筛选复用进行中的加载。
   let thumbnailObserver = null;
@@ -144,7 +145,7 @@
     for (const [id, item] of thumbnails) if (!valid.has(id)) { if (item.url) URL.revokeObjectURL(item.url); thumbnails.delete(id); }
     async function show(button) {
       const asset = assets.get(button.closest('.asset-card').dataset.id);
-      if (!asset || !asset.previewUrl || asset.type === 'audio' || asset.type === 'other' || (asset.provider === 'openlist' && !session)) return;
+      if (!asset || asset.deleted || asset.pending || !asset.previewUrl || asset.type === 'audio' || asset.type === 'other' || (asset.provider === 'openlist' && !session)) return;
       // 演示视频的 previewUrl 可能是视频本身，不能作为自动缩略图加载。
       if (!asset.cloud && !['image', 'animation'].includes(asset.type)) return;
       const parts = previewKey(input, session, asset, asset.type === 'video' ? 'poster' : 'thumbnail');
@@ -197,12 +198,13 @@
     cloudBusy = true;
     cloudStatus(`正在读取 ${cloudName()} 素材目录…`);
     render();
-    const timeout = setTimeout(() => controller.abort(), isGoogle() ? 60000 : 20000);
+    const timeout = setTimeout(() => controller.abort(), isGoogle() || isOpenList() ? 60000 : 20000);
     try {
       const listSession = memberSession();
       const data = await cloudClient().list(catalog.config, controller.signal);
       if (cloudRequest !== controller) return;
       cloudAssets = data.assets;
+      cloudFolders = data.folders || [];
       cloudFolderId = data.folderId;
       cloudFolderName = data.name;
       cloudStatus(`${data.name} · ${data.assets.length} 份素材`);
@@ -250,6 +252,8 @@
     $('#upload-button').replaceChildren(icon('file-upload'));
     $('#upload-button').setAttribute('aria-label', '上传素材');
     $('#upload-button').title = '上传素材';
+    $('#trash-button').hidden = !isOpenList() || !signedIn;
+    $('#new-folder-button').hidden = !canManage();
   }
 
   async function refreshMember(directoryAccess) {
@@ -344,7 +348,7 @@
     memberRequest?.abort(); memberRequest = null;
     let logoutError = '';
     try { await cloudAuth().logout(catalog.config); } catch (error) { logoutError = error.message; }
-    if (isOpenList()) { cloudRequest?.abort(); cloudAssets = []; cloudFolderId = null; render(); cloudStatus('请登录素材库。'); }
+    if (isOpenList()) { cloudRequest?.abort(); cloudAssets = []; cloudFolders = []; cloudFolderId = null; render(); cloudStatus('请登录素材库。'); }
     member = null; memberBusy = false;
     renderMember();
     window.StudioMotion.close($('#member-dialog'));
@@ -405,6 +409,7 @@
     const auth = cloudAuth();
     const previousCount = cloudAssets.length;
     const folderCache = new Map();
+    folderCache.virtualBase = $('#folder-filter').value === '*' ? [] : JSON.parse($('#folder-filter').value);
     let completed = 0;
     renderQueue();
     for (const item of uploadQueue) {
@@ -647,7 +652,7 @@
     preview.setAttribute('aria-label', `预览 ${asset.name}`);
     // 先显示占位图，进入可见区域后读取小型缩略图；视频不自动播放。
     if (asset.type === 'audio') preview.append(audioArt());
-    else preview.append(fallback(asset.type, '点击预览'));
+    else preview.append(fallback(asset.type, asset.pending ? '移动待确认' : asset.deleted ? '已移入回收站' : '点击预览'));
     const ext = asset.name.split('.').pop();
     preview.append(element('span', 'card-type', /^[a-z0-9]{1,6}$/i.test(ext) ? ext.toUpperCase() : TYPES[asset.type]));
     preview.addEventListener('click', () => openDetail(asset));
@@ -658,7 +663,15 @@
     const favorite = element('button', 'favorite-button');
     favoriteLabel(favorite, asset);
     favorite.addEventListener('click', () => toggleFavorite(asset));
+    if (asset.deleted) favorite.hidden = true;
     titleRow.append(title, favorite);
+    if (asset.managed && canManage()) {
+      const actions = element('button', 'asset-menu-button'); actions.type = 'button';
+      actions.setAttribute('aria-label', `管理 ${asset.name}`); actions.title = '整理素材';
+      actions.append(moreIcon());
+      actions.addEventListener('click', () => showAssetActions(actions, asset));
+      titleRow.append(actions);
+    }
     const bottom = element('div', 'card-bottom');
     bottom.append(element('span', '', `${asset.member || '未署名'} · ${asset.date.slice(5).replace('-', '/')}`), element('span', asset.demo ? 'demo-tag' : '', fileSize(asset)));
     const download = element('a', 'card-download');
@@ -669,6 +682,14 @@
     if (asset.provider === 'google') { download.target = '_blank'; download.rel = 'noopener noreferrer'; }
     if (asset.provider === 'openlist') download.addEventListener('click', event => downloadOpenList(event, asset));
     bottom.append(download);
+    if (asset.deleted || asset.pending) {
+      preview.disabled = true; title.disabled = true; download.hidden = true;
+      if (canManage()) {
+        const restore = element('button', 'card-restore', asset.pending ? '重试移动' : '恢复');
+        restore.addEventListener('click', () => openManage(asset.pending ? (asset.deleted ? 'restore' : 'trash') : 'restore', asset));
+        bottom.append(restore);
+      }
+    }
     content.append(titleRow);
     const folder = element('button', 'folder-chip', asset.tags.length ? asset.tags.join(' / ') : '根目录');
     folder.title = `按文件夹筛选：${folder.textContent}`;
@@ -688,7 +709,7 @@
     trigger.classList.toggle('is-selected', selectedPath !== null);
     trigger.title = selectedPath === null ? '浏览文件夹' : `当前文件夹：${selectedPath.join(' / ') || '根目录'}`;
     trigger.setAttribute('aria-label', selectedPath === null ? '浏览文件夹' : `浏览文件夹，当前：${selectedPath.join(' / ') || '根目录'}`);
-    trigger.disabled = !assets.length;
+    trigger.disabled = !assets.length && !cloudFolders.length && !canManage();
     $('#folder-browser-list').replaceChildren(...options.map(([value, fullName]) => {
       const parts = value === '*' ? null : JSON.parse(value);
       const row = element('button', 'folder-option'); row.type = 'button';
@@ -699,6 +720,13 @@
       row.title = fullName; row.setAttribute('aria-label', `${fullName}，${count} 份素材`);
       row.setAttribute('aria-pressed', String(value === selected));
       row.addEventListener('click', () => { $('#folder-filter').value = value; $('#folder-browser').hidePopover(); render(); trigger.focus(); });
+      if (canManage() && parts?.length) {
+        const wrapper = element('div', 'folder-option-row');
+        const edit = element('button', 'folder-edit'); edit.type = 'button'; edit.append(moreIcon());
+        edit.setAttribute('aria-label', `管理文件夹 ${fullName}`); edit.title = '修改文件夹';
+        edit.addEventListener('click', () => { $('#folder-browser').hidePopover(); openManage('folder-edit', { folder: parts.join('/') }); });
+        wrapper.append(row, edit); return wrapper;
+      }
       return row;
     }));
   }
@@ -720,6 +748,7 @@
     const folderSelect = $('#folder-filter');
     const previousFolder = folderSelect.value;
     const folders = new Map([['*', '全部文件夹'], ['[]', '根目录']]);
+    for (const folder of cloudFolders) folders.set(JSON.stringify(folder.split('/')), folder.split('/').join(' / '));
     for (const asset of assets) {
       for (let index = 1; index <= asset.tags.length; index++) {
         const path = asset.tags.slice(0, index);
@@ -732,7 +761,7 @@
     renderFolderBrowser(options, assets, folderSelect.value);
     const path = folderSelect.value === '*' ? null : JSON.parse(folderSelect.value);
     const visible = assets.filter((asset) => {
-      const matchesType = activeType === 'all' || (activeType === 'favorites' ? favorites.has(asset.id) : asset.type === activeType);
+      const matchesType = activeType === 'all' || activeType === 'trash' || (activeType === 'favorites' ? favorites.has(asset.id) : asset.type === activeType);
       const matchesFolder = path === null || path.length === 0 ? path === null || asset.tags.length === 0 : path.every((part, index) => asset.tags[index] === part);
       return matchesType && matchesFolder && [asset.name, asset.description, asset.member, ...asset.tags].join(' ').toLocaleLowerCase('zh-CN').includes(term);
     }).sort((a, b) => {
@@ -760,12 +789,12 @@
     $('#library-title').textContent = TITLES[activeType];
     const demoCount = visible.filter((asset) => asset.demo).length;
     $('#results-text').textContent = `${visible.length} 份素材${demoCount ? ` · ${demoCount} 份演示` : ''}${term ? ` · 搜索“${term}”` : ''}`;
-    $('#nav-count').textContent = assets.length;
+    $('#nav-count').textContent = (isCloud() ? cloudAssets : catalog.assets).filter(a => !a.deleted).length;
     $('#refresh-button').disabled = cloudBusy;
     $('#draft-notice').hidden = !draft;
     $('#footer-status').textContent = isCloud() ? `${cloudName()} 自动目录` : draft ? '本机设置草稿 · 尚未发布' : '演示目录 · 尚未接入真实仓库';
     $('#hosting-provider').textContent = cloudName();
-    $('#upload-duplicate-note').textContent = isOpenList() ? '保留文件夹层级；同名文件自动改名。空文件夹不上传。' : isGoogle() ? '同名文件保留为新文件。' : '同名文件自动改名。';
+    $('#upload-duplicate-note').textContent = isOpenList() ? '文件夹层级由网站保存；原文件统一存入云盘。空文件夹不上传。' : isGoogle() ? '同名文件保留为新文件。' : '同名文件自动改名。';
     document.querySelectorAll('[data-view]').forEach(button => {
       const selected = button.dataset.view === activeView;
       button.classList.toggle('active', selected);
@@ -784,6 +813,82 @@
   }
 
   function setType(type) { activeType = type; render(); }
+
+  function canManage() { return isOpenList() && !!memberSession() && member?.canManage === true && !memberBusy; }
+  function moreIcon() {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.classList.add('icon'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
+    for (const x of [5, 12, 19]) { const dot = document.createElementNS(svg.namespaceURI, 'circle'); dot.setAttribute('cx', x); dot.setAttribute('cy', '12'); dot.setAttribute('r', '1.8'); dot.setAttribute('fill', 'currentColor'); svg.append(dot); }
+    return svg;
+  }
+  function showAssetActions(trigger, asset) {
+    const menu = $('#asset-actions');
+    const items = asset.deleted ? [['restore', '恢复素材']] : asset.pending ? [['trash', '重试移入回收站']] : [['rename', '重命名'], ['move', '移动到文件夹'], ['trash', '移入回收站']];
+    menu.replaceChildren(...items.map(([action, label]) => {
+      const button = element('button', action === 'trash' ? 'danger' : '', label); button.type = 'button';
+      button.addEventListener('click', () => { menu.hidePopover(); openManage(action, asset); }); return button;
+    }));
+    menu.showPopover();
+    const rect = trigger.getBoundingClientRect();
+    menu.style.left = `${Math.max(12, Math.min(rect.right - 180, window.innerWidth - 192))}px`;
+    menu.style.top = `${Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - menu.offsetHeight - 12))}px`;
+  }
+  let manageIntent = null, manageBusy = false;
+  function openManage(action, asset = {}) {
+    if (!canManage()) { openMember(); return; }
+    if (manageBusy || uploading) { toast('请先等待当前操作完成。'); return; }
+    const dialog = $('#manage-dialog');
+    const folderAction = action.startsWith('folder-');
+    const folder = asset.folder === '根目录' ? '' : asset.folder || '';
+    const current = action === 'folder-create' ? ($('#folder-filter').value === '*' ? '' : JSON.parse($('#folder-filter').value).join('/')) : folder;
+    manageIntent = { action, asset, current };
+    const names = { rename: '重命名素材', move: '移动素材', trash: '移入回收站', restore: '恢复素材', 'folder-create': '新建文件夹', 'folder-edit': '修改文件夹' };
+    $('#manage-title').textContent = names[action];
+    $('#manage-name-label').hidden = !['rename', 'folder-create', 'folder-edit'].includes(action);
+    $('#manage-name').required = !$('#manage-name-label').hidden;
+    $('#manage-name').value = folderAction ? action === 'folder-create' ? '' : folder.split('/').at(-1) : asset.name;
+    $('#manage-folder-label').hidden = !['move', 'folder-create', 'folder-edit'].includes(action);
+    const available = ['', ...cloudFolders].filter(path => !(action === 'folder-edit' && (path === folder || path.startsWith(folder + '/'))));
+    $('#manage-folder').replaceChildren(...available.map(path => { const option = element('option', '', path ? path.split('/').join(' / ') : '根目录'); option.value = path; return option; }));
+    $('#manage-folder').value = folderAction && action === 'folder-edit' ? folder.split('/').slice(0, -1).join('/') : current;
+    $('#manage-help').textContent = action === 'trash' ? `“${asset.name}”将移入回收站，云盘原文件会移动到「被移除的文件」文件夹，可恢复。` : action === 'restore' ? `恢复“${asset.name}”，原文件移回原来的云盘位置，网站归属保持不变。` : action === 'rename' ? '仅修改网站名称，请保留文件扩展名。' : '';
+    $('#manage-error').textContent = '';
+    $('#manage-submit').textContent = action === 'trash' ? '移入回收站' : action === 'restore' ? '恢复' : '保存';
+    $('#manage-submit').disabled = false;
+    $('#manage-delete-folder').hidden = action !== 'folder-edit' || cloudAssets.some(a => a.tags.join('/') === folder || a.tags.join('/').startsWith(folder + '/')) || cloudFolders.some(path => path.startsWith(folder + '/'));
+    window.StudioMotion.open(dialog);
+    if (!$('#manage-name-label').hidden) { $('#manage-name').focus(); $('#manage-name').select(); }
+    else $('#manage-submit').focus();
+  }
+  async function submitManage(removeFolder = false) {
+    if (manageBusy || !manageIntent || !canManage()) return;
+    const intent = manageIntent, { action, asset } = intent;
+    let route, body;
+    const name = $('#manage-name').value.trim(), parentFolder = $('#manage-folder').value;
+    if (action.startsWith('folder-')) {
+      route = 'folder'; const path = (parentFolder ? parentFolder + '/' : '') + name;
+      body = action === 'folder-create' ? { action: 'create', folder: path } : { action: removeFolder ? 'delete' : 'move', folder: intent.current, next: path };
+    } else { route = ['rename', 'move'].includes(action) ? 'edit' : action; body = { id: asset.id, revision: asset.revision, ...(action === 'rename' ? { name } : action === 'move' ? { folder: parentFolder } : {}) }; }
+    manageBusy = true; $('#manage-submit').disabled = true; $('#manage-delete-folder').disabled = true;
+    $('#manage-error').textContent = ''; const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 90000);
+    try {
+      await window.OpenListClient.manage(catalog.config, route, body, controller.signal);
+      window.StudioMotion.close($('#manage-dialog'));
+      if ($('#detail-dialog').open && activeAsset?.id === asset.id) window.StudioMotion.close($('#detail-dialog'));
+      if (action.startsWith('folder-')) $('#folder-filter').value = '*';
+      await refreshCloud();
+      toast(route === 'trash' ? '已移入回收站，原文件已归档' : route === 'restore' ? '素材已恢复' : '已保存，所有成员共享这次整理');
+    } catch (error) {
+      $('#manage-error').textContent = controller.signal.aborted ? '操作超时。请刷新目录，再重试移动；不要重复上传原文件。' : error.message;
+      if (!$('#manage-dialog').open) toast($('#manage-error').textContent);
+    } finally { clearTimeout(timer); manageBusy = false; $('#manage-submit').disabled = false; $('#manage-delete-folder').disabled = false; }
+  }
+  $('#manage-form').addEventListener('submit', event => { event.preventDefault(); submitManage(); });
+  $('#manage-delete-folder').addEventListener('click', () => submitManage(true));
+  $('#new-folder-button').addEventListener('click', () => { $('#folder-browser').hidePopover(); openManage('folder-create'); });
+  $('#trash-button').addEventListener('click', () => { $('#folder-filter').value = '*'; setType('trash'); });
+  window.addEventListener('scroll', () => { if ($('#asset-actions').matches(':popover-open')) $('#asset-actions').hidePopover(); }, { passive: true });
 
   function updateDetailFavorite() {
     $('#detail-favorite').replaceChildren(icon(favorites.has(activeAsset.id) ? 'heart-filled' : 'heart'), document.createTextNode(favorites.has(activeAsset.id) ? '已收藏' : '收藏'));
