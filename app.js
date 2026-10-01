@@ -9,6 +9,28 @@
   const VIEW_KEY = 'orange-library-view-v1';
   const THEME_KEY = 'orange-library-theme-v1';
   const logo = $('.studio-lockup');
+  // Invisible outlines expand pointer targets without changing the visible lettering.
+  const logoSvg = logo.querySelector('svg');
+  for (const link of logoSvg.querySelectorAll('.logo-english')) {
+    const hit = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    hit.setAttribute('aria-hidden', 'true');
+    const signature = logoSvg.querySelector('#signature').cloneNode(true);
+    signature.removeAttribute('id');
+    const signatureHit = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    if (!link.classList.contains('logo-english-back')) signatureHit.setAttribute('clip-path', 'url(#woven)');
+    signatureHit.append(signature);
+    hit.append(signatureHit, logoSvg.querySelector('#logo-thread > path').cloneNode(true));
+    for (const path of hit.querySelectorAll('path')) {
+      path.setAttribute('fill', 'transparent');
+      path.setAttribute('stroke', 'transparent');
+      path.setAttribute('stroke-width', '10');
+      path.setAttribute('stroke-linejoin', 'round');
+      path.setAttribute('stroke-linecap', 'round');
+      path.setAttribute('vector-effect', 'non-scaling-stroke');
+      path.setAttribute('pointer-events', 'all');
+    }
+    link.append(hit);
+  }
   function applyTheme(theme) {
     document.documentElement.dataset.theme = theme;
     $('#logo-theme').setAttribute('aria-pressed', String(theme === 'light'));
