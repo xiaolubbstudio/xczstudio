@@ -108,6 +108,8 @@ html[data-theme="light"] .asset-actions button.danger,html[data-theme="light"] .
 
 /* Mobile uses one screen-centred column, rather than reserving a desktop side rail. */
 @media (max-width:760px) {
+  html,body { scrollbar-width:none; }
+  html::-webkit-scrollbar,body::-webkit-scrollbar { display:none; width:0; height:0; }
   body main { width:calc(100% - 32px); max-width:none; margin-inline:auto; padding: max(14px,env(safe-area-inset-top)) 0 calc(180px + env(safe-area-inset-bottom)); }
   .workspace-heading { justify-content:center; overflow:clip; }
   .workspace-heading h1.studio-lockup { width:100%; margin:0; }
