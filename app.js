@@ -93,6 +93,8 @@
   let uploadRequest = null;
   let uploadQueue = [];
   let uploading = false;
+  // 上传可以收起：窗口关掉、顶部留一个小胶囊显示进度，网页照常可以浏览和整理。
+  let uploadMinimized = false, uploadStats = null, uploadTarget = null, islandTimer = 0;
   let cloudFolderId = null;
   let member = null;
   let memberBusy = false;
@@ -465,12 +467,55 @@
     $('#choose-files').hidden = uploading;
     $('#choose-folder').hidden = uploading || !isOpenList();
     $('#upload-cancel').hidden = !uploading;
+    $('#upload-minimize').hidden = !uploading;
+  }
+  // 顶部胶囊（灵动岛）：进度圈 + 第几份 + 总进度；传完变成结果，几秒后收走。点它展开上传窗口。
+  function showIsland() {
+    const island = $('#upload-island');
+    clearTimeout(islandTimer);
+    if (island.hidden) {
+      island.hidden = false;
+      document.body.classList.add('has-upload-island');
+      island.animate?.([{ scale: '.5', opacity: 0 }, { scale: '1.06', opacity: 1, offset: .6 }, { scale: '1' }], { duration: 520, easing: window.StudioMotion.ease.bounce || 'ease-out' });
+    }
+    renderIsland();
+  }
+  function hideIsland() {
+    clearTimeout(islandTimer);
+    $('#upload-island').hidden = true;
+    $('#upload-island').classList.remove('is-done', 'is-failed');
+    document.body.classList.remove('has-upload-island');
+  }
+  function renderIsland(result) {
+    const island = $('#upload-island');
+    if (island.hidden) return;
+    const stats = uploadStats;
+    let progress = 1, text = '';
+    if (result) {
+      progress = 1; text = result.text;
+      island.classList.toggle('is-done', !result.failed);
+      island.classList.toggle('is-failed', Boolean(result.failed));
+    } else if (stats) {
+      progress = stats.totalBytes ? Math.min(1, (stats.doneBytes + stats.currentBytes * stats.percent / 100) / stats.totalBytes) : 0;
+      text = `正在上传 ${stats.index}/${stats.total} · ${Math.floor(progress * 100)}%`;
+    }
+    island.querySelector('.bar').style.strokeDashoffset = String(44 * (1 - progress));
+    $('#upload-island-text').textContent = text;
+    island.setAttribute('aria-label', `${text}，点击展开上传窗口`);
+  }
+  function minimizeUpload() {
+    if (!uploading) { window.StudioMotion.close($('#upload-dialog')); return; }
+    uploadMinimized = true;
+    window.StudioMotion.close($('#upload-dialog'));
+    showIsland();
   }
 
   // 在文件夹里上传就放进这个文件夹；收藏和回收站里上传放到最外层。
   const uploadFolder = () => isSpecial() ? '' : currentFolder;
   function openUpload() {
     if (!memberSession() || !member?.canUpload || memberBusy) { openMember(); return; }
+    uploadMinimized = false; hideIsland();
+    if (uploading) { renderQueue(); window.StudioMotion.open($('#upload-dialog')); return; }
     $('#upload-message').textContent = '';
     $('#upload-member').value = member.name;
     // 只有在某个文件夹里上传时才需要说明去向。
@@ -513,34 +558,51 @@
     const previousCount = cloudAssets.length;
     const folderCache = new Map();
     folderCache.virtualBase = uploadFolder() ? uploadFolder().split('/') : [];
+    uploadTarget = uploadFolder();
     let completed = 0;
     renderQueue();
     const total = uploadQueue.filter(item => !item.done).length;
+    uploadStats = { total, index: 0, totalBytes: uploadQueue.filter(item => !item.done).reduce((sum, item) => sum + (item.file.size || 0), 0), doneBytes: 0, currentBytes: 0, percent: 0 };
     let index = 0, reported = 0;
     for (const item of uploadQueue) {
       if (item.done || uploadRequest.signal.aborted) continue;
       try {
         item.status = '正在上传…'; renderQueue();
         index++; reported = Date.now();
+        Object.assign(uploadStats, { index, currentBytes: item.file.size || 0, percent: 0 }); renderIsland();
         presence({ action: 'upload', detail: `${index}/${total}`, folder: uploadFolder() });
         await client.upload(settings, item.file, (percent) => {
           item.status = `${percent}% · 正在上传`; renderQueue();
+          uploadStats.percent = percent; renderIsland();
           if (Date.now() - reported > 30000) { reported = Date.now(); presence({ detail: `${index}/${total} ${percent}%` }); }
         }, uploadRequest.signal, session, item.relativePath, folderCache);
         item.done = true; item.status = '上传成功'; completed++;
+        uploadStats.doneBytes += item.file.size || 0; uploadStats.percent = 0; uploadStats.currentBytes = 0;
       } catch (error) { item.status = error.message; if ([1000, 2000, 401].includes(error.code)) auth.logout(); }
       renderQueue();
     }
     const canceled = uploadRequest.signal.aborted;
     presence({ action: '', detail: '' });
-    uploading = false;
+    uploading = false; uploadTarget = null;
+    // 收起着传完：胶囊变成结果，成功 4 秒后收走，有失败的留 10 秒，点它可以看明细。
+    if (uploadMinimized) {
+      const failed = total - completed;
+      const text = canceled ? `已停止上传，完成 ${completed} 个` : failed ? `完成 ${completed} 个，${failed} 个未成功` : `已上传 ${completed} 个文件`;
+      showIsland(); renderIsland({ text, failed: failed > 0 || canceled });
+      islandTimer = setTimeout(hideIsland, failed || canceled ? 10000 : 4000);
+    }
+    uploadStats = null;
     uploadRequest = null;
     renderQueue();
     await refreshCloud();
     $('#upload-message').textContent = canceled ? '已停止上传，已完成的文件会保留。' : !completed ? '没有文件上传成功，请看上面的提示。' : `已上传 ${completed} 个文件${cloudAssets.length <= previousCount ? '，目录稍后刷新可见，不用重复上传。' : '。'}`;
   });
   $('#upload-cancel').addEventListener('click', () => uploadRequest?.abort());
-  $('#upload-dialog').addEventListener('cancel', (event) => { if (uploading) { event.preventDefault(); $('#upload-message').textContent = '请先点击“停止上传”，再关闭窗口。'; } });
+  $('#upload-dialog').addEventListener('cancel', (event) => { if (uploading) { event.preventDefault(); minimizeUpload(); } });
+  $('#upload-minimize').addEventListener('click', minimizeUpload);
+  $('#upload-island').addEventListener('click', openUpload);
+  // 正在上传时关闭或刷新网页，先让浏览器提醒一下。
+  addEventListener('beforeunload', event => { if (uploading) { event.preventDefault(); event.returnValue = ''; } });
   $('#refresh-button').addEventListener('click', () => { if (!isCloud()) toast('素材库尚未连接，请联系管理员。'); else refreshCloud(true); });
 
   const dropOverlay = $('#drop-overlay');
@@ -812,7 +874,7 @@
   function liftCard(x, y) {
     const { card, asset, pointer, type } = press; cancelPress();
     if (!card.isConnected) return;
-    if (manageBusy || uploading) { toast('请先等待当前操作完成。'); return; }
+    if (manageBusy) { toast('请先等待当前操作完成。'); return; }
     const ids = selection.has(asset.id) ? [...selection] : [asset.id];
     const tile = card.querySelector('.preview-button'), rect = tile.getBoundingClientRect();
     // 浮起的是缩略图的一份拷贝，原卡片留在原位变淡，标出放回去的位置。
@@ -927,7 +989,7 @@
   });
   addEventListener('pointercancel', event => { if (press?.pointer === event.pointerId) cancelPress(); if (drag?.pointer === event.pointerId) dropCard(true); });
   addEventListener('blur', () => { cancelPress(); dropCard(true); });
-  document.addEventListener('touchmove', event => { if (drag) event.preventDefault(); }, { passive: false });
+  $('#asset-grid').addEventListener('touchmove', event => { if (drag) event.preventDefault(); }, { passive: false });
   document.addEventListener('contextmenu', event => { if (drag || (press && press.type !== 'mouse')) event.preventDefault(); }, true);
   document.addEventListener('click', event => { if (Date.now() < suppressClick && event.target.closest?.('.asset-card')) { event.preventDefault(); event.stopPropagation(); } }, true);
   // 排序只改网站目录：先在页面上排好，后台没存上再恢复。
@@ -961,7 +1023,7 @@
   async function moveAssets(ids, folder) {
     const moving = ids.filter(id => { const asset = cloudAssets.find(item => item.id === id); return asset && folderOf(asset) !== folder; });
     if (!moving.length) return;
-    if (manageBusy || uploading) { toast('请先等待当前操作完成。'); return; }
+    if (manageBusy) { toast('请先等待当前操作完成。'); return; }
     manageBusy = true;
     const before = cloudAssets;
     const tags = folder ? folder.split('/') : [];
@@ -1136,10 +1198,12 @@
   // 往下滑时各组小标题滑到顶部依次叠成小分栏（CSS sticky）；这里只标出哪些已经收起，
   // 收起的那条显示阴影和这一组的几张小缩略图。
   let stuckFrame = 0;
+  let stickyTops = null;
   function updateStuck() {
     stuckFrame = 0;
-    for (const node of document.querySelectorAll('.section-heading, #asset-grid > .grid-group')) {
-      const top = parseFloat(getComputedStyle(node).top);
+    if (!stickyTops) stickyTops = new Map([...document.querySelectorAll('.section-heading, #asset-grid > .grid-group')].map(node => [node, parseFloat(getComputedStyle(node).top)]));
+    for (const [node, top] of stickyTops) {
+      if (!node.isConnected) continue;
       const stuck = scrollY > 0 && Number.isFinite(top) && node.getBoundingClientRect().top <= top + .5;
       if (stuck === node.classList.contains('is-stuck')) continue;
       node.classList.toggle('is-stuck', stuck);
@@ -1160,7 +1224,7 @@
     scrollTo({ top: scrollY < top - 1 ? top : 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   });
   addEventListener('scroll', watchStuck, { passive: true });
-  addEventListener('resize', watchStuck, { passive: true });
+  addEventListener('resize', () => { stickyTops = null; watchStuck(); }, { passive: true });
   function scrollToGroup(heading) {
     let first = heading.nextElementSibling;
     while (first && !first.getClientRects().length) first = first.nextElementSibling;
@@ -1266,7 +1330,16 @@
     // 全部素材且没有搜索时像文件管理器：先列下一层文件夹，再列这一层的素材。
     // 图片/视频/音频和搜索则列出当前位置及其所有下层里符合的素材。
     const browse = activeType === 'all' && !term;
-    const matchesTerm = asset => !term || [asset.name, asset.description, asset.member, ...asset.tags].join(' ').toLocaleLowerCase('zh-CN').includes(term);
+    // 搜索：名称原文、全拼、首字母、混拼都算（见 pinyin-search.js），所在文件夹也能搜到；越贴近的排越前。
+    const relevanceOf = new Map();
+    const relevance = asset => {
+      if (!term) return 1;
+      if (!relevanceOf.has(asset.id)) relevanceOf.set(asset.id, window.StudioPinyin
+        ? window.StudioPinyin.score(term, asset.name, asset.tags, [asset.description, asset.member].join(' '))
+        : [asset.name, asset.description, asset.member, ...asset.tags].join(' ').toLocaleLowerCase('zh-CN').includes(term) ? 1 : 0);
+      return relevanceOf.get(asset.id);
+    };
+    const matchesTerm = asset => relevance(asset) > 0;
     const visible = assets.filter(asset => {
       if (activeType === 'trash') return matchesTerm(asset);
       if (activeType === 'favorites') return favorites.has(asset.id) && matchesTerm(asset);
@@ -1274,7 +1347,7 @@
       if (browse ? place !== currentFolder : !within(place, currentFolder)) return false;
       const matchesType = activeType === 'all' || (activeType === 'image' ? ['image', 'animation'].includes(asset.type) : asset.type === activeType);
       return matchesType && matchesTerm(asset);
-    }).sort((a, b) => kindRank(a) - kindRank(b) || compare(a, b));
+    }).sort((a, b) => kindRank(a) - kindRank(b) || (term ? relevance(b) - relevance(a) : 0) || compare(a, b));
     function compare(a, b) {
       if (sort === 'name') return a.name.localeCompare(b.name, 'zh-CN');
       // 自定义顺序：还没排过的（比如新上传的）排在前面，按添加时间。
@@ -1302,6 +1375,7 @@
     // 小分栏按出现顺序叠在顶部：第几条就往下错开几格。
     cards.filter(card => card.classList.contains('grid-group')).forEach((heading, index) => heading.style.setProperty('--i', index));
     window.StudioMotion.grid($('#asset-grid'), cards);
+    stickyTops = null;
     watchStuck();
     if (cloudBusy && !visible.length && !subfolders.length) {
       for (let index=0; index<6; index++) { const tile=element('div','asset-skeleton'); tile.setAttribute('aria-hidden','true'); $('#asset-grid').append(tile); }
@@ -1322,7 +1396,7 @@
     $('#view-back').title = $('#view-back').getAttribute('aria-label');
     $('#select-button').hidden = !canManage() || activeType === 'trash';
     $('#new-folder-button').hidden = !canManage() || !browse;
-    $('#search-input').placeholder = currentFolder && !special ? `在“${currentFolder.split('/').at(-1)}”中搜索` : '搜索素材';
+    $('#search-input').placeholder = currentFolder && !special ? `在“${currentFolder.split('/').at(-1)}”中搜索` : '搜索素材，可用拼音或首字母';
     $('#trash-button').classList.toggle('active', activeType === 'trash');
     $('#trash-button').setAttribute('aria-pressed', String(activeType === 'trash'));
     const demoCount = visible.filter((asset) => asset.demo).length;
@@ -1410,7 +1484,8 @@
   let manageIntent = null, manageBusy = false;
   function openManage(action, asset = {}) {
     if (!canManage()) { openMember(); return; }
-    if (manageBusy || uploading) { toast('请先等待当前操作完成。'); return; }
+    if (manageBusy) { toast('请先等待当前操作完成。'); return; }
+    if (uploading && action === 'folder-edit' && uploadTarget && within(uploadTarget, asset.folder)) { toast('这个文件夹正在接收上传，传完再改。'); return; }
     const dialog = $('#manage-dialog');
     const folderAction = action.startsWith('folder-');
     const count = asset.ids?.length || 0;
@@ -1719,7 +1794,7 @@
   $('#detail-favorite').addEventListener('click', () => toggleFavorite(activeAsset));
   document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => {
     const dialog = button.closest('dialog');
-    if (dialog.id === 'upload-dialog' && uploading) { $('#upload-message').textContent = '请先点击“停止上传”，再关闭窗口。'; return; }
+    if (dialog.id === 'upload-dialog' && uploading) { minimizeUpload(); return; }
     window.StudioMotion.close(dialog);
   }));
   document.querySelectorAll('dialog').forEach((dialog) => {

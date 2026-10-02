@@ -417,6 +417,12 @@ body .action-rail #member-avatar { position:relative; perspective:160px; }
 .flip { position:absolute; inset:0; transform-style:preserve-3d; border-radius:50%; }
 .flip-face { position:absolute; inset:0; display:grid; place-items:center; border-radius:50%; backface-visibility:hidden; -webkit-backface-visibility:hidden; }
 .flip-back { transform:rotateY(180deg); background:#f5f5f7; color:#111; }
+/* 爱心：指着时变成柔和的玫瑰红（不用刺眼的大红）；已打开收藏时仍是橙色。 */
+:root { --heart:#f0717f; }
+html[data-theme="light"] { --heart:#d9566a; }
+@media (hover:hover) and (pointer:fine) { body .action-rail #favorites-button:not(.active):hover,html[data-theme="light"] body .action-rail #favorites-button:not(.active):hover { color:var(--heart); } }
+/* 刷新图标的转动全部由 delight.js 按转速控制（加速、保持、减速都连续），不再叠一个匀速的加载转圈。 */
+body[data-loading="true"] #refresh-button .icon { animation:none; }
 /* 刷新：转圈时气泡变成相反色。 */
 body .action-rail #refresh-button.is-inverted,html[data-theme="light"] body .action-rail #refresh-button.is-inverted { background:var(--ink); color:var(--page); }
 /* 上传：能量从底部涨上来，顶上一圈小波浪在流动；涨的时候图标变白。 */
@@ -454,6 +460,20 @@ footer .copyright { margin:0; }
 .copyright-dialog p { margin:0; font-size:13px; line-height:1.75; color:var(--muted); text-align:justify; }
 .copyright-dialog a { color:var(--accent); }
 .copyright-dialog .copyright-sign { margin-top:22px; text-align:right; color:var(--ink); }
+
+/* 上传收起后的“灵动岛”：顶部中间一个黑色胶囊，进度圈 + 第几份 + 总进度；点它展开上传窗口。
+   传完圈变绿（有失败变琥珀色）。胶囊在的时候，提示条往下让一点。 */
+.upload-island { position:fixed; top:max(14px,env(safe-area-inset-top)); left:50%; z-index:60; translate:-50% 0; display:flex; align-items:center; gap:10px; height:38px; padding:0 16px 0 11px; border:1px solid #ffffff14; border-radius:999px; background:#0a0b0c; color:#f3f5f6; font:inherit; font-size:13px; font-weight:500; font-variant-numeric:tabular-nums; white-space:nowrap; box-shadow:0 12px 32px #00000055; cursor:pointer; transition:background-color 160ms ease,scale 420ms var(--spring-bounce); }
+.upload-island[hidden] { display:none; }
+.upload-island:active { scale:.96; transition-duration:120ms; }
+@media (hover:hover) and (pointer:fine) { .upload-island:hover { background:#17181b; } }
+.island-ring { width:20px; height:20px; rotate:-90deg; flex:0 0 auto; }
+.island-ring circle { fill:none; stroke-width:2.6; }
+.island-ring .track { stroke:#ffffff26; }
+.island-ring .bar { stroke:var(--accent); stroke-linecap:round; stroke-dasharray:44; stroke-dashoffset:44; transition:stroke-dashoffset 320ms ease,stroke 240ms ease; }
+.upload-island.is-done .bar { stroke:#30d158; }
+.upload-island.is-failed .bar { stroke:#ff9f0a; }
+body.has-upload-island .toast { top:62px !important; }
 
 /* 底栏缩小：取消 1.15 倍放大，窄一些、矮一些；选中项是浅色底块，图标点出强调色。 */
 body .library-dock { transform:translateX(-50%); width:min(660px,calc(100vw - 200px)); max-width:none; gap:8px; }
@@ -501,3 +521,27 @@ html[data-theme="light"] body .library-dock .nav-item.active { color:var(--ink);
   .nav-indicator.is-ready,.library-dock,.tools-menu,.folder-browser,.asset-actions { transition-duration:1ms !important; }
   .asset-skeleton,body[data-loading="true"] #refresh-button .icon { animation:none; }
 }
+
+/* ===== 滚动性能（2026-10-02）：手机上滑动没有惯性、电脑上发卡的原因都在这里处理 ===== */
+/* 背景跟着页面走：固定背景会让每一帧都重画整页；几乎看不见的固定颗粒层也去掉。 */
+body,html[data-theme="light"] body { background-attachment:scroll; }
+body::before { content:none; display:none; }
+/* 吸顶的标题行和分组小分栏不再实时模糊（每滚一帧都要重新模糊后面的内容），改成几乎不透明的底色，观感接近。 */
+:root { --stuck-bg:rgba(14,14,15,.985); }
+html[data-theme="light"] { --stuck-bg:rgba(243,243,245,.985); }
+body .section-heading.is-stuck::before,body #asset-grid>.grid-group.is-stuck::before { backdrop-filter:none; -webkit-backdrop-filter:none; }
+/* 底部两栏：滑动中淡出后彻底隐藏，看不见的时候不再做模糊；停下时立刻显示再弹回。 */
+.library-dock { transition:opacity 240ms ease,translate 680ms var(--spring-bounce),visibility 0s; }
+.library-dock.is-scroll-moving { visibility:hidden; transition:opacity 150ms ease,translate 200ms var(--ease-exit),visibility 0s linear 150ms; }
+/* 触屏设备上的圆按钮不做背景模糊。 */
+@media not ((hover:hover) and (pointer:fine)) { body .action-rail :is(.button,.icon-button,.avatar) { backdrop-filter:none; -webkit-backdrop-filter:none; } }
+/* 长列表：屏幕外的卡片先不排版、不绘制，滚到附近再画。 */
+#asset-grid>.asset-card { content-visibility:auto; contain-intrinsic-size:auto 300px; }
+#asset-grid.list-view>.asset-card { contain-intrinsic-size:auto 72px; }
+/* 一直在跑的动画：上传按钮的能量波浪只在蓄能时动；“操控中”的呼吸点改成只用缩放和透明度的光圈，交给显卡合成，不重画。 */
+.energy::before { animation:none; }
+body .action-rail #upload-button.is-charging .energy::before { animation:energy-wave .8s linear infinite; }
+.presence-row.is-busy .presence-dot { position:relative; animation:none; }
+.presence-row.is-busy .presence-dot::after { content:""; position:absolute; inset:0; border-radius:50%; background:var(--accent); animation:presence-ring 1.6s ease-out infinite; }
+@keyframes presence-ring { from { transform:scale(1); opacity:.55; } to { transform:scale(2.6); opacity:0; } }
+@media (prefers-reduced-motion:reduce) { .presence-row.is-busy .presence-dot::after { animation:none; opacity:0; } }

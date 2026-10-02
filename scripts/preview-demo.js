@@ -14,6 +14,8 @@
     ['封面背景.jpg', '', 1500, 1000, 0, 210], ['长图教程.jpg', '', 750, 3000, 0, 40], ['震惊.gif', '', 400, 400, 0, 0], ['横幅.png', '', 2400, 800, 0, 120],
     ['星星贴纸.png', '', 600, 600, 1, 48], ['鼓掌.gif', '', 640, 360, 0, 280], ['转场.mp4', '', 1280, 720, 0, 230], ['箭头.png', '', 900, 300, 1, 10],
     ['表情 01.png', '表情包', 500, 500, 1, 30], ['片头.mp4', '开场', 1920, 1080, 0, 20]];
+  // /?demo&many 复制出 400 多份素材，用来测滚动性能。
+  if (new URLSearchParams(location.search).has('many')) { const base = names.slice(); for (let k = 1; k < 25; k++) base.forEach(([n, ...rest]) => names.push([n.replace(/(.[^.]+)$/, '-' + k + '$1'), ...rest])); }
   const assets = names.map(([name, folder], i) => ({ id: 'demo-' + i, name, folder, size: Math.round((1.3 + i * 2.7) * 1048576), modified: `2026-09-${String(30 - i).padStart(2, '0')}T10:00:00Z`, deleted: false, pending: false, revision: 1, thumb: '', uploader: 'angel_ni' }));
   const favorites = new Set(['demo-1']);
   const original = window.fetch.bind(window);

@@ -69,6 +69,9 @@
 !/island.css
 !/presence.js
 !/delight.js
+!/pinyin-data.js
+!/pinyin-search.js
+!/scripts/pinyin-search.test.cjs
 
 !/管理成员账号.cmd
 !/scripts/manage-members.ps1

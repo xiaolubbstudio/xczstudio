@@ -84,7 +84,17 @@
     if (button) setTimeout(() => burstFrom(button, { count: 14, power: 58 }), 240);
   }
 
-  // ---------- 用户头像：转过身去（背面是黑色剪影），停一下，再转回来。 ----------
+  // ---------- 用户头像：转过身去（背面是黑色剪影），停一下，再转回来。指着就播放；
+  // 正在播放时点击，不从头重来，而是加速把剩下的部分走完，紧接着完整播放一次点击动画，再打开账号窗口。 ----------
+  const FLIP = [
+    { transform: 'rotateY(0deg)', easing: OUT },
+    { transform: 'rotateY(-24deg) scale(.94)', offset: .12, easing: 'cubic-bezier(.5,0,.3,1)' },
+    { transform: 'rotateY(198deg) scale(1.06)', offset: .4, easing: 'ease-out' },
+    { transform: 'rotateY(180deg) scale(1)', offset: .5 },
+    { transform: 'rotateY(180deg) scale(1)', offset: .66, easing: 'cubic-bezier(.5,0,.3,1)' },
+    { transform: 'rotateY(372deg) scale(1.03)', offset: .9, easing: 'ease-out' },
+    { transform: 'rotateY(360deg) scale(1)' },
+  ];
   function setupAvatar() {
     const button = $('#member-avatar');
     if (!button || button.querySelector('.flip')) return;
@@ -92,41 +102,84 @@
     const front = document.createElement('span'); front.className = 'flip-face flip-front';
     front.append(...button.childNodes);
     const back = document.createElement('span'); back.className = 'flip-face flip-back';
-    const silhouette = icon('<circle cx="12" cy="7.5" r="4.5" fill="currentColor"/><path d="M4 21v-2a8 6 0 0 1 16 0v2Z" fill="currentColor"/>', 'silhouette');
-    back.append(silhouette);
+    back.append(icon('<circle cx="12" cy="7.5" r="4.5" fill="currentColor"/><path d="M4 21v-2a8 6 0 0 1 16 0v2Z" fill="currentColor"/>', 'silhouette'));
     flip.append(front, back); button.append(flip);
-    let passing = false;
-    // 先让人看见它转身，再打开账号窗口（舞台呈现）。
+    let turning = null, queued = false, passing = false;
+    const turn = () => { turning = play(flip, FLIP, { duration: 1300 }); const mine = turning; done(mine).then(() => { if (turning === mine) turning = null; }); return mine; };
+    // 点击动画：完整转一次，转到背面时打开账号窗口（舞台呈现）。
+    const clickTurn = () => { turn(); setTimeout(() => { passing = true; button.click(); passing = false; }, 420); };
+    button.addEventListener('pointerenter', event => { if (event.pointerType === 'mouse' && !turning && !queued) turn(); });
     button.addEventListener('click', event => {
       if (passing || reduced.matches) return;
       event.stopImmediatePropagation(); event.preventDefault();
-      play(flip, [
-        { transform: 'rotateY(0deg)', easing: OUT },
-        { transform: 'rotateY(-24deg) scale(.94)', offset: .12, easing: 'cubic-bezier(.5,0,.3,1)' },
-        { transform: 'rotateY(198deg) scale(1.06)', offset: .4, easing: 'ease-out' },
-        { transform: 'rotateY(180deg) scale(1)', offset: .5 },
-        { transform: 'rotateY(180deg) scale(1)', offset: .66, easing: 'cubic-bezier(.5,0,.3,1)' },
-        { transform: 'rotateY(372deg) scale(1.03)', offset: .9, easing: 'ease-out' },
-        { transform: 'rotateY(360deg) scale(1)' },
-      ], { duration: 1300 });
-      setTimeout(() => { passing = true; button.click(); passing = false; }, 420);
+      if (queued) return;
+      if (turning && turning.playState === 'running') {
+        // 正在转：剩下的部分加速走完，再接一次完整的点击动画。
+        queued = true;
+        const current = turning;
+        current.updatePlaybackRate(3.2);
+        done(current).then(() => { queued = false; clickTurn(); });
+        return;
+      }
+      clickTurn();
     }, true);
   }
 
-  // ---------- 刷新：先往回拧一点（预备），转一圈带点过头，转的时候气泡变成相反色。 ----------
-  function refresh() {
+  // ---------- 刷新：按“转速”来转，速度始终连续变化，不会突然变快变慢。
+  // 点击：先往回拧一下（预备），再加速到最快；刷新没完成就一直保持最快转着；完成后慢慢减速（至少 1.2 秒），
+  // 停在箭头摆正的位置（图标转 180° 和原来一样）。指着（没在刷新）时匀速慢转，移开同样慢慢停下。
+  // 点击引起的转动期间气泡反色。页面自己在读取目录时（比如刚打开）也按同样方式转。 ----------
+  function setupRefresh() {
     const button = $('#refresh-button'), svg = button?.querySelector('svg');
-    if (!svg || reduced.matches) return;
-    button.classList.add('is-inverted');
-    // 用 transform 叠加在“加载中”的转动（rotate 属性）上，转完正好回到 0，交给加载转动时不会跳。
-    const spin = play(svg, [
-      { transform: 'rotate(0deg)', easing: OUT },
-      { transform: 'rotate(-28deg)', offset: .16, easing: 'cubic-bezier(.4,0,.2,1)' },
-      { transform: 'rotate(384deg)', offset: .78, easing: 'ease-in-out' },
-      { transform: 'rotate(360deg)' },
-    ], { duration: 860 });
-    setTimeout(() => button.classList.remove('is-inverted'), 680);
-    return spin;
+    if (!svg) return;
+    const FAST = 900, HOVER = 330; // 度/秒
+    let angle = 0, speed = 0, hovering = false, clicked = false, clickedUntil = 0, windup = null, landing = null, frame = 0, last = 0;
+    const loading = () => document.body.dataset.loading === 'true';
+    const goal = now => loading() || now < clickedUntil ? FAST : hovering ? HOVER : 0;
+    const draw = () => { svg.style.transform = `rotate(${angle.toFixed(2)}deg)`; };
+    function tick(now) {
+      const dt = Math.min(.05, Math.max(0, (now - last) / 1000)); last = now;
+      const target = goal(now);
+      if (clicked && target < FAST) clicked = false;
+      button.classList.toggle('is-inverted', clicked);
+      if (windup) {
+        // 预备：0.16 秒往回拧 28°。
+        const t = Math.min(1, (now - windup.start) / 160);
+        angle = windup.from - 28 * (1 - (1 - t) ** 2);
+        if (t >= 1) windup = null;
+      } else if (landing && target === 0) {
+        // 减速落位：三次缓出，起始速度等于当前转速，所以接得上。
+        const t = Math.min(1, (now - landing.start) / landing.duration);
+        angle = landing.from + landing.distance * (1 - (1 - t) ** 3);
+        speed = 3 * landing.distance * (1 - t) ** 2 / (landing.duration / 1000);
+        if (t >= 1) { landing = null; speed = 0; angle %= 360; draw(); frame = 0; return; }
+      } else if (target === 0) {
+        // 开始减速：按当前速度算一段至少 1.2 秒的缓出，停在下一个整半圈。
+        const v = Math.max(speed, 90), stopAt = Math.ceil((angle + v * 1.2 / 3) / 180) * 180;
+        landing = { start: now, from: angle, distance: stopAt - angle };
+        landing.duration = Math.min(2600, 3 * landing.distance / v * 1000);
+      } else {
+        // 加速或换到指着时的速度：平滑地追上目标转速（约 0.45 秒到九成）。
+        landing = null;
+        speed += (target - speed) * Math.min(1, dt * 5);
+        angle += speed * dt;
+      }
+      draw();
+      frame = requestAnimationFrame(tick);
+    }
+    const run = () => { if (!frame && !reduced.matches) { last = performance.now(); frame = requestAnimationFrame(tick); } };
+    button.addEventListener('pointerenter', event => { if (event.pointerType === 'mouse') { hovering = true; run(); } });
+    button.addEventListener('pointerleave', () => { hovering = false; });
+    button.addEventListener('click', () => {
+      if (reduced.matches) return;
+      clicked = true;
+      clickedUntil = performance.now() + 700; // 刷新再快，也先转到最快再慢慢停。
+      if (speed < FAST * .4 && !windup) windup = { start: performance.now(), from: angle };
+      run();
+    });
+    // 读取目录开始（不管是不是点出来的）就转起来；结束后由上面自然减速。
+    new MutationObserver(() => { if (loading()) run(); }).observe(document.body, { attributes: true, attributeFilter: ['data-loading'] });
+    if (loading()) run();
   }
 
   // ---------- 上传：指着时能量从底部往上充盈，满了小小爆一下放烟花；点击直接爆炸。 ----------
@@ -321,10 +374,10 @@
     });
   }
   setupAvatar();
+  setupRefresh();
   setupUpload();
   setupTools();
   setupCategories();
   $('#favorites-button')?.addEventListener('click', heart);
-  $('#refresh-button')?.addEventListener('click', refresh);
   window.StudioDelight = { fireworks };
 })();
