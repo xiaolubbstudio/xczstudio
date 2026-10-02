@@ -145,7 +145,7 @@
     for (const [id, item] of thumbnails) if (!valid.has(id)) { if (item.url) URL.revokeObjectURL(item.url); thumbnails.delete(id); }
     async function show(button) {
       const asset = assets.get(button.closest('.asset-card').dataset.id);
-      if (!asset || asset.deleted || asset.pending || !asset.previewUrl || asset.type === 'audio' || asset.type === 'other' || (asset.provider === 'openlist' && !session)) return;
+      if (!asset || asset.deleted || asset.pending || (!asset.previewUrl && !asset.cachedPreview) || asset.type === 'audio' || asset.type === 'other' || (asset.provider === 'openlist' && !session)) return;
       // 演示视频的 previewUrl 可能是视频本身，不能作为自动缩略图加载。
       if (!asset.cloud && !['image', 'animation'].includes(asset.type)) return;
       const parts = previewKey(input, session, asset, asset.type === 'video' ? 'poster' : 'thumbnail');
@@ -155,7 +155,7 @@
         item = {}; thumbnails.set(id, item);
         item.promise = window.StudioPreviewCache.load(parts, () => safeUrl(asset.previewUrl), { signal, kind: 'image', limit: 4 * 1048576 })
           .then(result => { if (signal.aborted || thumbnails.get(id) !== item) return ''; item.url = URL.createObjectURL(result.blob); return item.url; })
-          .catch(() => '');
+          .catch(() => { if (!asset.previewUrl && thumbnails.get(id) === item) thumbnails.delete(id); return ''; }); // 上次目录没有预览地址时，等新目录到达再取。
       }
       const url = await item.promise;
       if (!url || signal.aborted || !button.isConnected) return;
@@ -184,36 +184,67 @@
     $('#cloud-status').classList.toggle('error', error);
   }
 
+  // 记住上次的目录，打开页面先显示，后台返回后再更新；不保存令牌和临时预览地址。
+  const CATALOG_CACHE = 'studio-openlist-catalog-v1';
+  function cachedCatalog(session) {
+    if (!isOpenList() || !session) return null;
+    try {
+      const data = JSON.parse(localStorage.getItem(CATALOG_CACHE) || 'null');
+      return data && data.endpoint === session.endpoint && data.folderPath === session.folderPath && data.username === session.username && Array.isArray(data.assets) && Array.isArray(data.folders) ? data : null;
+    } catch { return null; }
+  }
+  function cacheCatalog(session, data) {
+    try {
+      if (!session || !data) { localStorage.removeItem(CATALOG_CACHE); return; }
+      const assets = data.assets.map(asset => ({ ...asset, previewUrl: '', cachedPreview: Boolean(asset.previewUrl) }));
+      const value = JSON.stringify({ endpoint: session.endpoint, folderPath: session.folderPath, username: session.username, assets, folders: data.folders || [], folderId: data.folderId, name: data.name, access: data.access });
+      if (value.length <= 2000000) localStorage.setItem(CATALOG_CACHE, value); else localStorage.removeItem(CATALOG_CACHE);
+    } catch { /* 存储不可用时只是不显示上次目录。 */ }
+  }
+
   async function refreshCloud(notify = false) {
     cloudRequest?.abort();
     cloudRequest = null;
     memberRequest?.abort(); memberRequest = null;
-    member = null; memberBusy = false; cloudFolderId = null;
+    memberBusy = false; cloudFolderId = null; cloudFolderName = '';
+    const listSession = memberSession();
+    // 本机有有效会话就直接按已登录显示，不单独等待账号核实；后台拒绝时再退回登录。
+    if (!isOpenList() || !listSession || member?.name !== listSession.username) member = null;
+    const cached = !cloudAssets.length && cachedCatalog(listSession);
+    if (cached) {
+      cloudAssets = cached.assets; cloudFolders = cached.folders; cloudFolderId = cached.folderId; cloudFolderName = cached.name;
+      member = { name: listSession.username, role: listSession.role, avatarUrl: '', ...cached.access };
+    }
     renderMember();
-    cloudFolderName = '';
     if (isGoogle()) window.GoogleDriveAuth.prepare(catalog.config).catch(error => { if (isGoogle()) $('#member-login-message').textContent = error.message; });
     if (!isCloud()) { cloudAssets = []; cloudBusy = false; cloudStatus(`尚未连接 ${cloudName()}`); render(); return; }
     const controller = new AbortController();
     cloudRequest = controller;
     cloudBusy = true;
-    cloudStatus(`正在读取 ${cloudName()} 素材目录…`);
+    cloudStatus(cloudAssets.length ? '' : `正在读取 ${cloudName()} 素材目录…`);
     render();
     const timeout = setTimeout(() => controller.abort(), isGoogle() || isOpenList() ? 60000 : 20000);
     try {
-      const listSession = memberSession();
       const data = await cloudClient().list(catalog.config, controller.signal);
       if (cloudRequest !== controller) return;
       cloudAssets = data.assets;
       cloudFolders = data.folders || [];
       cloudFolderId = data.folderId;
       cloudFolderName = data.name;
+      if (isOpenList() && memberSession()?.username === listSession?.username) cacheCatalog(listSession, data);
       cloudStatus(`${data.name} · ${data.assets.length} 份素材`);
       if (notify) toast('素材已更新');
       await refreshMember(isOpenList() && memberSession()?.token === listSession?.token ? data.access : undefined);
     } catch (error) {
       if (cloudRequest !== controller) return;
       const needsLogin = isOpenList() && error.code === 401;
-      cloudStatus(needsLogin ? '请先登录素材库。' : `目录未能更新：${controller.signal.aborted ? '连接超时，请重试。' : error.message}`, !needsLogin);
+      if (needsLogin) {
+        // 令牌失效或被撤销：只清本机，显示登录入口。
+        if (memberSession()) cloudAuth().logout();
+        cacheCatalog(null); cloudAssets = []; cloudFolders = []; member = null; renderMember();
+      }
+      const offline = error instanceof TypeError && !controller.signal.aborted;
+      cloudStatus(needsLogin ? '请先登录素材库。' : `目录未能更新：${controller.signal.aborted ? '连接超时，请重试。' : offline ? '连不上素材库后台，请检查网络或代理。' : error.message}`, !needsLogin);
       if (notify) toast(needsLogin ? '请先登录素材库' : '刷新失败，请重试');
     } finally {
       clearTimeout(timeout);
@@ -245,9 +276,14 @@
     $('#member-recheck').hidden = !signedIn;
     $('#member-recheck').disabled = memberBusy;
     $('#member-login-message').textContent = isOpenList() ? '' : catalog.config.clientId ? '' : `管理员正在配置 ${cloudName()} 登录。`;
+    $('#member-title').textContent = '成员登录';
     if (isOpenList()) {
-      $('#member-info').textContent = member ? `${member.name} · 已登录` : signedIn ? '正在核实账号…' : '请使用你的素材库成员账号。';
-      $('#member-status').textContent = message || (memberBusy ? '核实账号中…' : signedIn && !member?.canUpload ? '此账号没有上传权限' : '');
+      // 会话在本机就视为已登录；权限随目录一起返回，不显示核实过程。
+      $('#member-title').textContent = signedIn ? member?.name || memberSession().username : '成员登录';
+      $('#member-info').textContent = signedIn ? '已登录' : '';
+      $('#member-permission-help').textContent = '';
+      $('#member-status').textContent = message || (member && !member.canUpload ? '此账号没有上传权限' : '');
+      $('#member-recheck').hidden = true;
     }
     $('#upload-button').replaceChildren(icon('file-upload'));
     $('#upload-button').setAttribute('aria-label', '上传素材');
@@ -259,6 +295,14 @@
   async function refreshMember(directoryAccess) {
     memberRequest?.abort();
     const session = memberSession();
+    if (isOpenList() && session && directoryAccess) {
+      // 目录接口已验证令牌并给出权限，不再额外请求账号资料；续期在后台进行。
+      memberRequest = null; memberBusy = false;
+      member = { name: session.username, role: session.role, avatarUrl: '', ...directoryAccess };
+      renderMember();
+      window.OpenListAuth.renewIfNeeded(memberSettings(), session).catch(() => {});
+      return;
+    }
     member = null;
     if (!session || !cloudFolderId) { memberRequest = null; memberBusy = false; renderMember(); return; }
     const controller = new AbortController();
@@ -290,11 +334,7 @@
 
   function openMember() {
     renderMember();
-    if (isOpenList() && !$('#openlist-username').value) {
-      const remembered = window.OpenListAuth.remembered(catalog.config);
-      $('#openlist-username').value = remembered;
-      $('#openlist-remember').checked = Boolean(remembered);
-    }
+    if (isOpenList() && !$('#openlist-username').value) $('#openlist-username').value = window.OpenListAuth.remembered(catalog.config);
     window.StudioMotion.open($('#member-dialog'));
   }
 
@@ -327,11 +367,13 @@
     const button = $('#openlist-login-submit');
     button.disabled = true;
     try {
-      await window.OpenListAuth.begin(catalog.config, $('#openlist-username').value, $('#openlist-password').value, $('#openlist-otp').value);
-      window.OpenListAuth.remember(catalog.config, $('#openlist-remember').checked ? $('#openlist-username').value : '');
+      await window.OpenListAuth.begin(catalog.config, $('#openlist-username').value, $('#openlist-password').value);
+      window.OpenListAuth.remember(catalog.config, $('#openlist-username').value);
+      // 账号密码正确就直接进入素材库，目录在页面上加载。
+      window.StudioMotion.close($('#member-dialog'));
       await refreshCloud();
     } catch (error) { $('#member-login-message').textContent = error.message; }
-    finally { $('#openlist-password').value = ''; $('#openlist-password').type = 'password'; $('#password-toggle').setAttribute('aria-pressed','false'); $('#password-toggle').setAttribute('aria-label','显示密码'); $('#password-toggle').replaceChildren(icon('eye')); $('#openlist-otp').value = ''; button.disabled = false; }
+    finally { $('#openlist-password').value = ''; $('#openlist-password').type = 'password'; $('#password-toggle').setAttribute('aria-pressed','false'); $('#password-toggle').setAttribute('aria-label','显示密码'); $('#password-toggle').replaceChildren(icon('eye')); button.disabled = false; }
   });
   $('#password-toggle').addEventListener('click', () => {
     const input = $('#openlist-password'), shown = input.type === 'password';
@@ -348,7 +390,7 @@
     memberRequest?.abort(); memberRequest = null;
     let logoutError = '';
     try { await cloudAuth().logout(catalog.config); } catch (error) { logoutError = error.message; }
-    if (isOpenList()) { cloudRequest?.abort(); cloudAssets = []; cloudFolders = []; cloudFolderId = null; render(); cloudStatus('请登录素材库。'); }
+    if (isOpenList()) { cloudRequest?.abort(); cacheCatalog(null); cloudAssets = []; cloudFolders = []; cloudFolderId = null; render(); cloudStatus('请登录素材库。'); }
     member = null; memberBusy = false;
     renderMember();
     window.StudioMotion.close($('#member-dialog'));
@@ -1092,7 +1134,7 @@
     dialog.addEventListener('close', () => {
       if (dialog.open) return; // 快速重新打开时，旧的 close 事件不能清空新预览。
       dialog.querySelectorAll('audio,video').forEach((media) => { media.pause(); media.removeAttribute('src'); media.load(); });
-      if (dialog.id === 'member-dialog') { $('#openlist-password').value = ''; $('#openlist-otp').value = ''; }
+      if (dialog.id === 'member-dialog') { $('#openlist-password').value = ''; $('#member-login-message').textContent = ''; }
       if (dialog.id === 'detail-dialog') { stopPreview(); activeAsset = null; $('#detail-preview').replaceChildren(); }
     });
   });

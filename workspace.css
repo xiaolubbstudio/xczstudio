@@ -118,6 +118,7 @@ dialog::backdrop { background:#22232785; backdrop-filter:blur(5px); }
 .password-field input { padding-right:48px!important; }
 .password-field .icon-button { position:absolute; top:3px; right:3px; width:40px; height:40px; border:0; background:transparent; }
 .field-help,.dialog-intro { color:#77786e; font-size:11px; }
+.form-dialog .field-help:empty,.form-dialog .dialog-intro:empty { display:none; }
 .form-error,.danger { color:#af4b32; }
 .upload-row { border-radius:12px; background:#eeeee9; border:0; padding:14px; }
 .upload-choices { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px; }

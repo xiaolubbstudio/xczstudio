@@ -6,12 +6,17 @@
   const RENEW_WINDOW = 30 * 24 * 60 * 60 * 1000;
   const renewals = new Map();
   const config = input => root.OpenListClient.config(input);
-  function tokenExpiry(token) {
+  // Reading the signed token only saves a round trip; the backend still verifies every request.
+  function tokenPayload(token) {
     try {
       const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
       const payload = JSON.parse(root.atob(part));
-      return Number.isFinite(payload.exp) ? payload.exp * 1000 : 0;
-    } catch { return 0; }
+      return payload && typeof payload === 'object' ? payload : null;
+    } catch { return null; }
+  }
+  function tokenExpiry(token) {
+    const exp = tokenPayload(token)?.exp;
+    return Number.isFinite(exp) ? exp * 1000 : 0;
   }
   const expiry = session => session?.expires || tokenExpiry(session?.token || '') || session?.created + 7 * 24 * 3600000;
   function validSession(session, input, now = Date.now()) {
@@ -25,6 +30,7 @@
       try { persistent = root.localStorage?.getItem(KEY); } catch { /* Storage can be blocked by the browser. */ }
       const session = JSON.parse(persistent || root.sessionStorage.getItem(KEY) || 'null');
       if (validSession(session, input)) {
+        if (![0, 2].includes(session.role)) session.role = tokenPayload(session.token)?.role;
         save(session); // Migrate an existing tab session without asking for its password.
         return session;
       }
@@ -53,15 +59,16 @@
     // Do not restore a session after logout, or overwrite a newer account in another tab.
     if (get(input)?.token === session.token) { save(next); Object.assign(session, next); }
   }
-  async function begin(input, username, password, otpCode = '') {
+  async function begin(input, username, password) {
     if (!username?.trim() || !password) throw new Error('请填写成员账号和密码。');
     const signal = root.AbortSignal.timeout(20000);
-    const data = await root.OpenListClient.request(input, 'auth/login', { username: username.trim(), password, otp_code: otpCode }, null, signal);
+    const data = await root.OpenListClient.request(input, 'auth/login', { username: username.trim(), password }, null, signal);
     const session = { ...config(input), username: username.trim(), token: data?.token, created: Date.now(), ...(data?.expires_at ? { expires: data.expires_at * 1000 } : {}) };
     if (!validSession(session, input)) throw new Error('后台没有返回有效登录会话。');
-    // 身份核实完成后才保存会话；拒绝访客、禁用账号和身份错配。
-    const user = await root.OpenListClient.profile(input, session, signal);
-    session.role = user.role;
+    // 登录令牌已写明身份，直接进入；只有旧后台缺少这些信息时才多问一次。拒绝访客和身份错配。
+    const payload = tokenPayload(session.token);
+    if (payload?.username === session.username && [0, 2].includes(payload.role)) session.role = payload.role;
+    else session.role = (await root.OpenListClient.profile(input, session, signal)).role;
     save(session);
   }
   async function logout(input) {

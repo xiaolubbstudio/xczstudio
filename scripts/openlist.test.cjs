@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const input = { provider: 'openlist', folderUrl: 'https://library.example.test/', folderPath: '/' };
 function browser(fetch, persistent = new Map()) {
   const memory = new Map();
-  const scope = { URL, Date, AbortSignal, Uint8Array, crypto: require("node:crypto").webcrypto, sessionStorage: { getItem: key => memory.get(key), setItem: (key, value) => memory.set(key, value), removeItem: key => memory.delete(key) }, fetch };
+  const scope = { URL, Date, AbortSignal, Uint8Array, atob, crypto: require("node:crypto").webcrypto, sessionStorage: { getItem: key => memory.get(key), setItem: (key, value) => memory.set(key, value), removeItem: key => memory.delete(key) }, fetch };
   scope.localStorage = { getItem: key => persistent.get(key), setItem: (key, value) => persistent.set(key, value), removeItem: key => persistent.delete(key) };
   scope.window = scope;
   vm.createContext(scope);
@@ -69,6 +69,23 @@ test('wrong password, guest and mismatched identity cannot persist a member sess
   for (const user of [{ username: 'member', role: 1 }, { username: 'another', role: 0 }, { username: 'member', role: 0, disabled: true }]) {
     const b = browser(async url => response(url.endsWith('/login') ? { token: 'fixture' } : user));
     await assert.rejects(b.OpenListAuth.begin(input, 'member', 'fixture'));
+    assert.equal(b.OpenListAuth.get(input), null);
+  }
+});
+
+test('a member login token enters with one request; guest or mismatched tokens still need the profile check', async () => {
+  const jwt = payload => 'h.' + Buffer.from(JSON.stringify(payload)).toString('base64url') + '.s';
+  const exp = Math.floor(Date.now() / 1000) + 180 * 86400;
+  const routes = [];
+  const fast = browser(async url => { routes.push(new URL(url).pathname); return response({ token: jwt({ username: 'member', role: 0, exp }), expires_at: exp }); });
+  await fast.OpenListAuth.begin(input, 'member', 'fixture');
+  assert.deepEqual(routes, ['/api/auth/login']);
+  assert.equal(fast.OpenListAuth.get(input).role, 0);
+  for (const payload of [{ username: 'member', role: 1, exp }, { username: 'another', role: 0, exp }]) {
+    const seen = [];
+    const b = browser(async url => { seen.push(new URL(url).pathname); return response(url.endsWith('/login') ? { token: jwt(payload), expires_at: exp } : { username: payload.username, role: payload.role }); });
+    await assert.rejects(b.OpenListAuth.begin(input, 'member', 'fixture'));
+    assert.deepEqual(seen, ['/api/auth/login', '/api/me']);
     assert.equal(b.OpenListAuth.get(input), null);
   }
 });
