@@ -29,6 +29,7 @@
 !/scripts/
 /scripts/*
 !/scripts/serve.cjs
+!/scripts/preview-demo.js
 !/scripts/start-preview.ps1
 !/scripts/pcloud-client.test.cjs
 !/scripts/pcloud-auth.test.cjs
@@ -63,6 +64,7 @@
 
 
 !/dock.css
+!/island.css
 
 !/管理成员账号.cmd
 !/scripts/manage-members.ps1

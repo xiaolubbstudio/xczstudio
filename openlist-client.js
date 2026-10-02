@@ -3,7 +3,9 @@
   'use strict';
   function config(input) {
     const url = new URL(input.folderUrl);
-    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error('请填写云端后台的 HTTPS 根网址，不含密码、参数或路径。');
+    // 本机预览经 scripts/serve.cjs 转发接口，只放行回环地址的 http。
+    const loopback = url.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(url.hostname);
+    if ((url.protocol !== 'https:' && !loopback) || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error('请填写云端后台的 HTTPS 根网址，不含密码、参数或路径。');
     const folderPath = input.folderPath || '/';
     if (!folderPath.startsWith('/') || folderPath.includes('\\') || /[\u0000-\u001f]/.test(folderPath) || folderPath.split('/').some(x => ['.', '..'].includes(x))) throw new Error('素材目录路径无效。');
     return { endpoint: url.origin, folderPath: folderPath.replace(/\/+$/, '') || '/' };
@@ -66,27 +68,33 @@
       if (content.length >= 5000 || ++page > 50) throw new Error('目录过大，请缩小素材目录范围。');
     }
   }
+  // 三个分类按扩展名归档：动图归图片，透明视频归视频。
+  const IMAGE = ['png', 'jpg', 'jpeg', 'jfif', 'webp', 'gif', 'apng', 'svg', 'avif', 'bmp', 'tif', 'tiff', 'heic', 'heif', 'ico'];
+  const VIDEO = ['mp4', 'webm', 'mov', 'mkv', 'm4v', 'avi', 'flv', 'wmv', 'mpg', 'mpeg', '3gp', 'ts', 'mts', 'm2ts', 'ogv'];
+  const AUDIO = ['mp3', 'wav', 'ogg', 'oga', 'm4a', 'flac', 'aac', 'aif', 'aiff', 'wma', 'opus', 'amr', 'mid', 'midi'];
   function type(name) {
     const ext = name.split('.').pop().toLowerCase();
-    if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'avif'].includes(ext)) return 'image';
-    if (['mp4', 'webm', 'mov', 'mkv', 'm4v'].includes(ext)) return 'video';
-    if (['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext)) return 'audio';
+    if (IMAGE.includes(ext)) return 'image';
+    if (VIDEO.includes(ext)) return 'video';
+    if (AUDIO.includes(ext)) return 'audio';
     return 'other';
   }
-  async function list(input, signal) {
+  // 平时读后台保存的目录；点刷新才要求后台立即重新清点云盘。
+  async function list(input, signal, refresh = false) {
     const settings = config(input), session = sessionFor(input);
     if (!session) { const error = new Error('请先登录素材库。'); error.code = 401; throw error; }
-    const data = await manage(input, 'list', {}, signal);
+    const data = await manage(input, 'list', refresh === true ? { refresh: true } : {}, signal);
     if (!Array.isArray(data?.assets) || !Array.isArray(data?.folders) || data.assets.length > 5000) throw new Error('素材管理目录无效。');
     const assets = data.assets.map(file => {
       if (typeof file.id !== 'string' || typeof file.name !== 'string' || !file.name || /[\\/\u0000-\u001f]/.test(file.name) || typeof file.folder !== 'string') throw new Error('云端返回了无效素材。');
       return { id: file.id, name: file.name, type: type(file.name), folder: file.folder || '根目录', tags: file.folder.split('/').filter(Boolean), description: '', member: '', date: String(file.modified || '').slice(0, 10), modified: String(file.modified || ''), sizeMB: Number(file.size) / 1048576, cloud: true, provider: 'openlist', managed: true, deleted: !!file.deleted, pending: !!file.pending, revision: file.revision, previewUrl: mediaUrl(file.thumb, input), sourceUrl: '' };
     });
     const access = { canUpload: data.canManage === true, canManage: data.canManage === true, hasWritePermission: data.canManage === true };
-    return { assets, folders: data.folders, folderId: settings.folderPath, name: '素材库', access };
+    const favorites = Array.isArray(data.favorites) ? data.favorites.filter(id => typeof id === 'string') : [];
+    return { assets, folders: data.folders, favorites, folderId: settings.folderPath, name: '素材库', access, syncing: data.syncing === true };
   }
   async function manage(input, action, body = {}, signal) {
-    if (!['list', 'edit', 'trash', 'restore', 'folder', 'resolve'].includes(action)) throw new Error('素材操作无效。');
+    if (!['list', 'edit', 'move', 'trash', 'restore', 'folder', 'favorite', 'backup', 'resolve'].includes(action)) throw new Error('素材操作无效。');
     return request(input, 'fs/studio_catalog/' + action, { ...body, path: config(input).folderPath }, sessionFor(input), signal);
   }
   async function profile(input, session, signal) {

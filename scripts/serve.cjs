@@ -1,20 +1,67 @@
 // 仅用于本地预览，不接收素材上传，也不公开项目里的技能或文档。
+// /api 转发到线上后台，成员可以用真实账号在本机先看改动；只监听本机地址。
+// 后台域名在国内需要代理：启动前设置 NODE_USE_ENV_PROXY=1 和 HTTPS_PROXY=http://127.0.0.1:7897。
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const port = Number(process.env.PORT || 4173);
 const host = process.env.PREVIEW_HOST === 'localhost' ? 'localhost' : '127.0.0.1';
+const API_ORIGIN = 'https://xczstudio-openlist-trial.eliya-activation-cloud.workers.dev';
 const mime = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.mp4': 'video/mp4', '.webm': 'video/webm' };
 
+async function proxyApi(request, response) {
+  if (!['GET', 'POST'].includes(request.method)) { response.writeHead(405); response.end(); return; }
+  const chunks = []; let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > 1048576) { response.writeHead(413); response.end(); return; }
+    chunks.push(chunk);
+  }
+  // 只转发接口需要的头；不带浏览器 Cookie 或来源，后台按普通请求处理。
+  const headers = {};
+  for (const name of ['authorization', 'content-type', 'accept']) if (request.headers[name]) headers[name] = request.headers[name];
+  try {
+    const upstream = await fetch(API_ORIGIN + request.url, { method: request.method, headers, body: request.method === 'POST' ? Buffer.concat(chunks) : undefined, redirect: 'manual', signal: AbortSignal.timeout(90000) });
+    const out = { 'Content-Type': upstream.headers.get('content-type') || 'application/json', 'Cache-Control': 'no-store' };
+    if (upstream.headers.get('retry-after')) out['Retry-After'] = upstream.headers.get('retry-after');
+    response.writeHead(upstream.status, out);
+    response.end(Buffer.from(await upstream.arrayBuffer()));
+  } catch {
+    response.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    response.end(JSON.stringify({ code: 502, message: '本机预览连不上线上后台，请检查代理。', data: null }));
+  }
+}
+
 http.createServer((request, response) => {
-  if (!['GET', 'HEAD'].includes(request.method)) { response.writeHead(405); response.end(); return; }
   let relative;
   try { relative = decodeURIComponent(new URL(request.url, 'http://localhost').pathname).replace(/^\/+/, '') || 'index.html'; }
   catch { response.writeHead(400); response.end(); return; }
-  const allowed = ['index.html', 'auth.html', 'styles.css', 'workspace.css', 'brand.css', 'dark.css', 'rail.css', 'dock.css', 'motion.css', 'motion.js', 'app.js', 'preview-cache.js', 'pcloud-auth.js', 'auth-callback.js', 'pcloud-client.js', 'google-drive-client.js', 'google-drive-auth.js', 'openlist-client.js', 'openlist-auth.js', 'upload-drop.js', 'fluent.css', 'data/catalog.js', '.nojekyll'].includes(relative) || relative.startsWith('assets/');
+  if (relative.startsWith('api/')) { proxyApi(request, response).catch(() => response.destroy()); return; }
+  if (!['GET', 'HEAD'].includes(request.method)) { response.writeHead(405); response.end(); return; }
+  // /?demo 用演示素材看页面，不连后台。
+  if (relative === '__demo.js') { fs.readFile(path.join(__dirname, 'preview-demo.js'), (error, text) => { response.writeHead(error ? 404 : 200, { 'Content-Type': mime['.js'], 'Cache-Control': 'no-cache' }); response.end(error ? '' : text); }); return; }
+  const allowed = ['index.html', 'auth.html', 'styles.css', 'workspace.css', 'brand.css', 'dark.css', 'rail.css', 'dock.css', 'motion.css', 'island.css', 'motion.js', 'app.js', 'preview-cache.js', 'pcloud-auth.js', 'auth-callback.js', 'pcloud-client.js', 'google-drive-client.js', 'google-drive-auth.js', 'openlist-client.js', 'openlist-auth.js', 'upload-drop.js', 'fluent.css', 'data/catalog.js', '.nojekyll'].includes(relative) || relative.startsWith('assets/');
   const target = path.resolve(root, relative);
   if (!allowed || !target.startsWith(root + path.sep) || relative.includes('..') || relative.includes('\\')) { response.writeHead(404); response.end('Not found'); return; }
+  if (relative === 'index.html' && new URL(request.url, 'http://localhost').searchParams.has('demo')) {
+    fs.readFile(path.join(root, 'index.html'), 'utf8', (error, text) => {
+      if (error) { response.writeHead(404); response.end(); return; }
+      response.writeHead(200, { 'Content-Type': mime['.html'], 'Cache-Control': 'no-cache' });
+      response.end(text.replace('<script src="data/catalog.js', '<script src="__demo.js"></script><script src="data/catalog.js'));
+    });
+    return;
+  }
+  if (relative === 'data/catalog.js') {
+    // 预览页把后台地址指向本机，接口经上面的转发到线上。
+    const origin = /^(127\.0\.0\.1|localhost):\d+$/.test(request.headers.host || '') ? `http://${request.headers.host}/` : `http://${host}:${port}/`;
+    fs.readFile(target, 'utf8', (error, text) => {
+      if (error) { response.writeHead(404); response.end('Not found'); return; }
+      response.writeHead(200, { 'Content-Type': mime['.js'], 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' });
+      response.end(request.method === 'HEAD' ? undefined : text.replace(/folderUrl:\s*"[^"]*"/, `folderUrl: "${origin}"`));
+    });
+    return;
+  }
   fs.stat(target, (error, stat) => {
     if (error || !stat.isFile()) { response.writeHead(404); response.end('Not found'); return; }
     const headers = { 'Content-Type': mime[path.extname(target)] || 'application/octet-stream', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff', 'Accept-Ranges': 'bytes' };

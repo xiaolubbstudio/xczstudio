@@ -1,0 +1,326 @@
+/* 灵动岛式动效：按下干脆收紧，松开带一点回弹；弹簧曲线由 motion.js 生成，这里是不支持时的近似。 */
+:root { --spring-bounce:cubic-bezier(.34,1.45,.64,1); --spring-snappy:cubic-bezier(.3,1.25,.6,1); --spring-smooth:cubic-bezier(.23,1,.32,1); --ease-exit:cubic-bezier(.3,0,.8,.15); }
+
+/* 按压反馈用独立的 scale 属性，不覆盖元素原有的 transform 定位。 */
+:is(.button,.icon-button,.nav-item,.avatar,.favorite-button,.tools-menu .tool-option,.view-switch button,.folder-entry,.view-back,.asset-menu-button,.card-download,.card-restore,.folder-option,.dialog-close,#clear-search,.preview-button,.asset-actions button) {
+  transition:scale 560ms var(--spring-bounce),background-color 200ms ease,color 200ms ease,opacity 200ms ease;
+}
+:is(.button,.icon-button,.nav-item,.avatar,.favorite-button,.tools-menu .tool-option,.view-switch button,.folder-entry,.view-back,.asset-menu-button,.card-download,.card-restore,.folder-option,.dialog-close,#clear-search,.asset-actions button):active:not(:disabled) { scale:.9; transition-duration:110ms; transition-timing-function:cubic-bezier(.2,0,0,1); }
+.preview-button:active:not(:disabled) { scale:.97; transition-duration:120ms; transition-timing-function:cubic-bezier(.2,0,0,1); }
+.button:active,.icon-button:active,.nav-item:active,.favorite-button:active,.avatar:active,.view-switch button:active { transform:none; }
+.preview-play:active { transform:translateX(-50%); }
+
+/* 分类底色：一块橙色胶囊在选项间滑动、伸缩。 */
+.library-dock #sidebar-filters { position:relative; isolation:isolate; }
+.library-dock .nav-item { position:relative; z-index:1; }
+.library-dock .nav-item.active { background:transparent; }
+.nav-indicator { position:absolute; left:0; top:0; z-index:0; width:0; height:0; border-radius:999px; background:var(--orange); pointer-events:none; opacity:1; }
+/* 位置用回弹小的弹簧，宽度保留 Q 弹；冲到两端时被胶囊内壁裁圆，不会出现直边。 */
+.nav-indicator.is-ready { transition:translate 560ms var(--spring-snappy),width 640ms var(--spring-bounce),height 640ms var(--spring-bounce),opacity 220ms ease,scale 520ms var(--spring-snappy); }
+.nav-indicator.is-hidden { opacity:0; scale:.55; }
+
+/* 弹出菜单：打开时从按钮处弹出，关闭时快速收回。 */
+.tools-menu,.folder-browser,.asset-actions { transition:opacity 150ms ease,transform 200ms var(--ease-exit),display 200ms allow-discrete,overlay 200ms allow-discrete; }
+.tools-menu:popover-open,.folder-browser:popover-open,.asset-actions:popover-open { transition:opacity 200ms ease,transform 600ms var(--spring-bounce),display 600ms allow-discrete,overlay 600ms allow-discrete; }
+.tools-menu { transform-origin:right top; transform:translateX(10px) scale(.86); }
+.tools-menu:popover-open { transform:none; }
+@starting-style { .tools-menu:popover-open { opacity:0; transform:translateX(10px) scale(.86); } }
+.folder-browser { transform-origin:left top; transform:translateY(-6px) scale(.9); }
+.folder-browser:popover-open { transform:none; }
+@starting-style { .folder-browser:popover-open { opacity:0; transform:translateY(-6px) scale(.9); } }
+.asset-actions { transform-origin:right top; opacity:0; transform:scale(.86); }
+.asset-actions:popover-open { opacity:1; transform:none; }
+@starting-style { .asset-actions:popover-open { opacity:0; transform:scale(.86); } }
+
+/* 底部两栏滑动时隐去，停下时弹回。 */
+.library-dock { transition:opacity 240ms ease,translate 680ms var(--spring-bounce); }
+.library-dock.is-scroll-moving { translate:0 22px; transition:opacity 150ms ease,translate 200ms var(--ease-exit); }
+
+/* 提示像灵动岛：顶部黑色胶囊。 */
+body .toast,html[data-theme="light"] body .toast { top:16px; bottom:auto; padding:11px 22px; border-radius:999px; border:1px solid #ffffff10; background:#0a0b0c; color:#f3f5f6; font-size:12px; font-weight:500; letter-spacing:.2px; box-shadow:0 12px 32px #00000055; transform-origin:center top; }
+
+/* 加载中：占位卡轻轻呼吸，刷新按钮转动。 */
+.asset-skeleton { animation:island-breathe 1.4s ease-in-out infinite; }
+.asset-skeleton:nth-child(2n) { animation-delay:.18s; }
+.asset-skeleton:nth-child(3n) { animation-delay:.36s; }
+@keyframes island-breathe { 50% { opacity:.45; } }
+body[data-loading="true"] #refresh-button .icon { animation:island-spin .9s linear infinite; }
+@keyframes island-spin { to { rotate:360deg; } }
+
+/* 回收站与收藏的返回入口。 */
+.section-title { align-items:center; }
+.view-back { display:grid; place-items:center; flex-shrink:0; width:36px; height:36px; margin-right:-4px; padding:0; border:0; border-radius:50%; background:#ffffff0d; color:#cfd8db; cursor:pointer; }
+.view-back .icon { width:18px; height:18px; }
+html[data-theme="light"] .view-back { background:#2026290d; color:#37474d; }
+@media (hover:hover) and (pointer:fine) { .view-back:hover { background:#ffffff17; color:#fff; } html[data-theme="light"] .view-back:hover { background:#20262917; color:#20262a; } }
+.section-heading [hidden],.form-dialog label[hidden] { display:none !important; }
+.tools-menu .tool-option.active { color:var(--orange); }
+
+/* 根目录素材不写“根目录”，但保留一行高度让卡片底线对齐。 */
+.folder-chip:disabled { visibility:hidden; }
+footer:has(#footer-status:empty) { display:none; }
+
+/* 路径：全部素材 › 片头 › 素材，上一级可点、可把卡片拖上去。 */
+.section-title { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; min-width:0; }
+.breadcrumb { display:flex; flex-wrap:wrap; align-items:center; gap:2px 6px; min-width:0; }
+.breadcrumb h2 { margin:0; overflow-wrap:anywhere; }
+.crumb { padding:4px 6px; margin:0 -6px; border:0; background:transparent; color:var(--muted); font:inherit; font-size:15px; font-weight:600; cursor:pointer; overflow-wrap:anywhere; }
+.crumb-separator { color:var(--muted); opacity:.6; font-size:15px; }
+@media (hover:hover) and (pointer:fine) { .crumb:hover { color:var(--ink); } }
+
+/* 标题行右侧：多选、新建文件夹、排序。 */
+.section-heading { gap:12px; }
+.section-tools { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.section-tool { display:grid; place-items:center; width:36px; height:36px; padding:0; border:0; border-radius:50%; background:#ffffff0d; color:#cfd8db; cursor:pointer; }
+.section-tool .icon { width:18px; height:18px; }
+.section-tool[aria-pressed="true"] { background:var(--orange); color:#181514; }
+.sort-select { appearance:none; -webkit-appearance:none; height:36px; padding:0 26px 0 12px; border:0; border-radius:999px; background:#ffffff0d url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m7 10 5 5 5-5' fill='none' stroke='%23a7b3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 8px center/14px; color:#cfd8db; font:inherit; font-size:12px; cursor:pointer; color-scheme:dark; }
+html[data-theme="light"] .section-tool,html[data-theme="light"] .sort-select { background-color:#2026290d; color:#37474d; color-scheme:light; }
+@media (hover:hover) and (pointer:fine) { .section-tool:not([aria-pressed="true"]):hover,.sort-select:hover { background-color:#ffffff17; color:#fff; } html[data-theme="light"] .section-tool:not([aria-pressed="true"]):hover,html[data-theme="light"] .sort-select:hover { background-color:#20262917; color:#20262a; } }
+
+/* 文件夹卡片：与素材卡同一网格、同样高度。 */
+body .folder-preview { display:grid; place-items:center; color:var(--orange); }
+.folder-preview>.icon { width:min(30%,76px); height:auto; aspect-ratio:1; opacity:.72; transition:scale 560ms var(--spring-bounce),opacity 200ms ease; }
+@media (hover:hover) and (pointer:fine) { .folder-card:hover .folder-preview>.icon { scale:1.08; opacity:1; } }
+.folder-card .card-bottom { min-height:33px; align-items:center; color:var(--muted); }
+.folder-card .card-bottom>.folder-count { display:block; }
+.list-view .folder-preview>.icon { width:34px; }
+
+/* 拖到文件夹或路径上：目标亮起并微微放大。 */
+.folder-card.is-drop-target .folder-preview { outline:2px solid var(--orange); outline-offset:-2px; background:#e8794914; }
+.folder-card.is-drop-target .folder-preview>.icon { scale:1.16; opacity:1; }
+.crumb.is-drop-target { color:var(--orange); background:#e8794918; border-radius:999px; }
+body.is-moving-assets .folder-preview { outline:1px dashed #e8794966; outline-offset:-1px; }
+
+/* 多选：卡片右上角圆形勾，选中后橙色描边。 */
+.select-mark { position:absolute; top:9px; right:9px; z-index:2; display:grid; place-items:center; width:24px; height:24px; border-radius:50%; border:1.5px solid #ffffffc0; background:#0000006b; color:transparent; opacity:0; scale:.5; pointer-events:none; transition:opacity 160ms ease,scale 480ms var(--spring-bounce),background-color 160ms ease,border-color 160ms ease,color 160ms ease; }
+.select-mark .icon { width:15px; height:15px; }
+body.is-selecting .select-mark { opacity:1; scale:1; }
+.asset-card.is-selected .select-mark { background:var(--orange); border-color:var(--orange); color:#181514; }
+.asset-card.is-selected .preview-button { outline:2px solid var(--orange); outline-offset:-2px; scale:.96; }
+
+/* 多选操作条：底部黑色胶囊，替换搜索与分类栏。 */
+.selection-bar { position:fixed; left:50%; bottom:max(26px,calc(env(safe-area-inset-bottom) + 14px)); z-index:13; display:flex; align-items:center; gap:6px; max-width:calc(100vw - 32px); padding:6px 6px 6px 20px; border:1px solid #ffffff12; border-radius:999px; background:#0a0b0c; color:#f3f5f6; box-shadow:0 14px 36px #00000070; transform:translateX(-50%); white-space:nowrap; }
+.selection-bar[hidden] { display:none; }
+#selection-count { margin-right:8px; font-size:12px; font-variant-numeric:tabular-nums; }
+.selection-bar button { display:grid; place-items:center; height:38px; padding:0 16px; border:0; border-radius:999px; background:#ffffff14; color:inherit; font:inherit; font-size:12px; cursor:pointer; transition:scale 520ms var(--spring-bounce),background-color 160ms ease,opacity 160ms ease; }
+.selection-bar button:active:not(:disabled) { scale:.9; transition-duration:110ms; }
+.selection-bar button:disabled { opacity:.4; cursor:default; }
+.selection-bar .danger { color:#ff8f78; }
+#selection-cancel { width:38px; padding:0; }
+#selection-cancel .icon { width:16px; height:16px; }
+@media (hover:hover) and (pointer:fine) { .selection-bar button:not(:disabled):hover { background:#ffffff22; } }
+body.is-selecting .library-dock { opacity:0; translate:0 30px; pointer-events:none; }
+
+/* ===== 精简（2026-10-02）：Windows 11 / Apple 式的配色与材质 ===== */
+/* 中性近黑底 + 顶部一点柔光；浮层是半透明磨砂玻璃（Acrylic）加一条细亮边；文字分白与半透明白；
+   强调色是干净的亮橙，只点在很小的地方。Logo 自己的颜色不受影响。 */
+:root {
+  --orange:#ff8a3d; --accent:#ff8a3d; --accent-ink:#1a0d03;
+  --ink:#f5f5f7; --muted:rgba(235,235,245,.64); --faint:rgba(235,235,245,.38);
+  --line:rgba(255,255,255,.08); --surface:rgba(255,255,255,.045); --surface-2:rgba(255,255,255,.075); --surface-3:rgba(255,255,255,.12);
+  --primary-bg:#f5f5f7; --primary-ink:#0d0d0e;
+  --float:rgba(36,36,38,.66); --float-solid:rgba(30,30,32,.94); --float-edge:inset 0 1px 0 rgba(255,255,255,.07);
+  --float-shadow:0 12px 40px rgba(0,0,0,.45),0 2px 8px rgba(0,0,0,.25); --glass:blur(30px) saturate(160%);
+  --page:#0e0e0f; --glow:rgba(255,255,255,.055);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI Variable Text","Segoe UI","PingFang SC","Microsoft YaHei UI","Microsoft YaHei",sans-serif;
+}
+html[data-theme="light"] {
+  --orange:#e8650d; --accent:#e8650d; --accent-ink:#fff;
+  --ink:#1d1d1f; --muted:rgba(60,60,67,.68); --faint:rgba(60,60,67,.44);
+  --line:rgba(0,0,0,.08); --surface:rgba(0,0,0,.035); --surface-2:rgba(0,0,0,.055); --surface-3:rgba(0,0,0,.085);
+  --primary-bg:#1d1d1f; --primary-ink:#fff;
+  --float:rgba(252,252,253,.7); --float-solid:rgba(250,250,251,.96); --float-edge:inset 0 1px 0 rgba(255,255,255,.8);
+  --float-shadow:0 12px 40px rgba(0,0,0,.1),0 2px 8px rgba(0,0,0,.05);
+  --page:#f3f3f5; --glow:rgba(255,255,255,.9);
+}
+body,html[data-theme="light"] body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI Variable Text","Segoe UI","PingFang SC","Microsoft YaHei UI","Microsoft YaHei",sans-serif; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; color:var(--ink); background:radial-gradient(1200px 520px at 50% -140px,var(--glow),transparent 70%) no-repeat,var(--page); background-attachment:fixed; }
+/* 颗粒只留极淡一层，像 Acrylic 的噪点，不再“脏”。 */
+body::before { opacity:.016; }
+/* 浮层统一材质：弹出菜单、底栏、右侧按钮、对话框。 */
+body .tools-menu,body .asset-actions,html[data-theme="light"] body .tools-menu,html[data-theme="light"] body .asset-actions { background:var(--float-solid); border:1px solid var(--line); box-shadow:var(--float-shadow),var(--float-edge); backdrop-filter:var(--glass); -webkit-backdrop-filter:var(--glass); }
+dialog,html[data-theme="light"] dialog { background:var(--float-solid); border:1px solid var(--line); box-shadow:0 30px 90px rgba(0,0,0,.5),var(--float-edge); backdrop-filter:var(--glass); -webkit-backdrop-filter:var(--glass); }
+html[data-theme="light"] dialog { box-shadow:0 30px 90px rgba(0,0,0,.16),var(--float-edge); }
+dialog::backdrop,html[data-theme="light"] dialog::backdrop { background:rgba(0,0,0,.42); backdrop-filter:blur(14px) saturate(120%); }
+html[data-theme="light"] dialog::backdrop { background:rgba(240,240,242,.5); }
+body .action-rail .button,body .action-rail .icon-button,body .action-rail .avatar,html[data-theme="light"] body .action-rail button.button,html[data-theme="light"] body .action-rail button.icon-button,html[data-theme="light"] body .action-rail button.avatar { background:var(--float); color:var(--muted); border:1px solid var(--line); box-shadow:var(--float-edge); backdrop-filter:var(--glass); -webkit-backdrop-filter:var(--glass); }
+@media (hover:hover) and (pointer:fine) { body .action-rail .button:hover,body .action-rail .icon-button:hover,body .action-rail .avatar:hover,html[data-theme="light"] body .action-rail .button:hover,html[data-theme="light"] body .action-rail .icon-button:hover,html[data-theme="light"] body .action-rail .avatar:hover { background:var(--surface-3); color:var(--ink); } }
+/* 普通按钮、输入框：Fluent 式的浅层与细边，聚焦时底部一条强调色。 */
+body .button:not(.primary),body .icon-button,.view-back,.section-tool,.sort-select { background-color:var(--surface-2); border-color:var(--line); color:var(--ink); }
+.view-back,.section-tool,.sort-select { color:var(--muted); }
+@media (hover:hover) and (pointer:fine) { body .button:not(.primary):not(:disabled):hover,body .icon-button:not(:disabled):hover { background-color:var(--surface-3); } .view-back:hover,.section-tool:not([aria-pressed="true"]):hover,.sort-select:hover,html[data-theme="light"] .view-back:hover,html[data-theme="light"] .section-tool:not([aria-pressed="true"]):hover,html[data-theme="light"] .sort-select:hover { background-color:var(--surface-3); color:var(--ink); } }
+html[data-theme="light"] .view-back,html[data-theme="light"] .section-tool,html[data-theme="light"] .sort-select { background-color:var(--surface-2); color:var(--muted); }
+.sort-select { color-scheme:dark; }
+html[data-theme="light"] .sort-select { color-scheme:light; }
+body .form-dialog input:not([type=file]):not([type=checkbox]),body .form-dialog textarea,body .form-dialog select,html[data-theme="light"] body .form-dialog input:not([type=file]):not([type=checkbox]),html[data-theme="light"] body .form-dialog select { background:var(--surface); border:1px solid var(--line); color:var(--ink); box-shadow:none; transition:border-color 160ms ease,box-shadow 160ms ease; }
+body .form-dialog input:not([type=file]):not([type=checkbox]):focus,body .form-dialog select:focus,body .form-dialog textarea:focus { outline:0; border-color:var(--line); box-shadow:inset 0 -2px 0 var(--accent); }
+body .form-dialog input::placeholder { color:var(--faint); }
+body .upload-row,body .upload-choices .button,body .empty-state { background:transparent; border-color:var(--line); }
+body .upload-choices .button { background:var(--surface); }
+body .empty-state h3 { color:var(--muted); }
+body .notice { background:var(--surface-2); border-color:var(--line); color:var(--ink); }
+body .tools-menu .view-switch,html[data-theme="light"] body .tools-menu .view-switch { background:var(--surface); }
+body .tools-menu .view-switch button.active { background:var(--surface-3); color:var(--ink); box-shadow:none; }
+body .tools-menu .tool-option { color:var(--ink); }
+@media (hover:hover) and (pointer:fine) { body .tools-menu .tool-option:not(:disabled):hover,.asset-actions button:hover { background:var(--surface-2); } }
+body .tools-menu .logout-option { color:var(--muted); }
+.detail-meta,body .detail-content>p { color:var(--muted); }
+#detail-position { color:var(--faint); }
+.preview-navigation,.detail-meta { border-color:var(--line); }
+
+/* 主按钮：暖白底深字；视频上的播放按钮用深色半透明，不再是大块橙色。 */
+body .button.primary,body .primary { background:var(--primary-bg); border-color:var(--primary-bg); color:var(--primary-ink); box-shadow:none; font-weight:600; }
+@media (hover:hover) and (pointer:fine) { body .button.primary:not(:disabled):hover { background:#fff; border-color:#fff; } html[data-theme="light"] body .button.primary:not(:disabled):hover { background:#000; border-color:#000; } }
+body .preview-play.primary { background:#0c0d0dcc; border:1px solid #ffffff24; color:#f3f3ef; backdrop-filter:blur(10px); }
+body .favorite-button.selected,body #detail-favorite.selected,.action-rail #favorites-button.active,html[data-theme="light"] .action-rail #favorites-button.active { color:var(--accent); background:transparent; }
+body .card-restore { color:var(--accent); }
+
+/* 字号：正文 13–14px，次要 12px，不再用 9–10px；粗体只给标题。 */
+body { font-size:14px; }
+.breadcrumb h2,#library-title { font-size:22px; font-weight:600; letter-spacing:0; }
+.crumb,.crumb-separator { font-size:18px; font-weight:500; }
+#results-text { font-size:13px; color:var(--faint); font-variant-numeric:tabular-nums; }
+body .button { font-size:13px; font-weight:500; }
+.form-dialog label:not(.button) { font-size:13px; }
+body .field-help,body .dialog-intro,.member-status,.cloud-status { font-size:12px; }
+.tools-menu h2 { font-size:12px; }
+.tools-menu .tool-option { font-size:13px; }
+.tools-menu .view-switch button { font-size:12px; }
+.sort-select { font-size:13px; }
+.asset-actions button { font-size:13px; }
+.detail-kicker { font-size:12px; color:var(--accent); letter-spacing:0; }
+.detail-meta { font-size:13px; }
+#detail-position { font-size:12px; }
+.upload-row span { font-size:12px; }
+.empty-state h3 { font-size:15px; font-weight:500; }
+#selection-count,.selection-bar button { font-size:13px; }
+body .toast { font-size:13px; }
+
+/* 卡片：缩略图 + 名称 + 一行浅色信息；没有类型角标、分割线和空行。 */
+body .asset-grid:not(.list-view) { gap:34px 22px; }
+body .asset-card .card-type { display:none; }
+/* 预览框固定 4:3，内容绝对定位，图片再大也不会把框撑开。
+   每张卡片都是同一块浅底（和文件夹、音频一样），素材按原比例完整放在里面、四周留同样的空：
+   横图、竖图、长图、透明贴纸混在一起，网格的外框仍然整齐划一。 */
+body .asset-grid:not(.list-view) .preview-button,body .asset-grid:not(.list-view) .preview-button[data-surface] { position:relative; display:block; aspect-ratio:4/3; min-height:0; height:auto; padding:0; overflow:visible; border:0; background:var(--surface); box-shadow:none; transition:background-color 200ms ease,scale 520ms var(--spring-bounce); }
+body .asset-grid:not(.list-view) .preview-button>img { position:absolute; inset:14px; margin:auto; width:auto; height:auto; max-width:calc(100% - 28px); max-height:calc(100% - 28px); object-fit:contain; }
+body .asset-grid:not(.list-view) .preview-button>.preview-fallback,body .asset-grid:not(.list-view) .preview-button>.audio-art { position:absolute; inset:0; background:transparent; }
+body .preview-button img { object-fit:contain; }
+/* 不透明素材：细线和柔和阴影贴着图片本身，像放在托盘上的一张照片；透明素材直接透出底色，不加棋盘格。 */
+body .preview-button[data-surface="opaque"] img { box-shadow:0 0 0 1px var(--line),0 6px 18px #00000052; }
+html[data-theme="light"] body .preview-button[data-surface="opaque"] img { box-shadow:0 0 0 1px var(--line),0 6px 16px #0000001a; }
+@media (hover:hover) and (pointer:fine) { body .preview-button[data-surface="opaque"]:hover { box-shadow:none; } body .preview-button:hover img { transform:none; } }
+/* 没有图片的卡片（加载前、音频、其他文件、文件夹）用同一块浅底，网格虚实一致。 */
+body .preview-fallback,body .audio-art,body .folder-preview { width:100%; height:100%; background:var(--surface); color:var(--faint); }
+.preview-fallback>.icon { width:28px; height:28px; }
+body .audio-art { display:flex; align-items:center; justify-content:center; gap:4px; padding:0 12%; overflow:hidden; }
+body .audio-art span { flex:0 1 3px; min-width:1px; border-radius:3px; background:var(--faint); opacity:.75; }
+body .asset-grid:not(.list-view) .folder-preview { display:grid; place-items:center; background:var(--surface); }
+.folder-preview>.icon { width:min(24%,58px); height:auto; opacity:1; color:var(--faint); }
+@media (hover:hover) and (pointer:fine) { .folder-card:hover .folder-preview>.icon { color:var(--muted); } }
+
+body .card-content { display:grid; gap:2px; padding:12px 0 0; }
+body .card-title-row { display:flex; align-items:center; gap:2px; min-height:30px; }
+body .card-title { flex:1; min-width:0; min-height:0; display:block; padding:0; border:0; background:none; font:inherit; font-size:14px; font-weight:500; line-height:1.4; color:var(--ink); text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; -webkit-line-clamp:unset; cursor:pointer; }
+@media (hover:hover) and (pointer:fine) { body .asset-card:hover .card-title { color:var(--ink); } }
+.card-actions { display:flex; align-items:center; flex-shrink:0; margin-right:-6px; }
+.card-actions>* { display:grid; place-items:center; width:30px; height:30px; padding:0; border:0; background:transparent; color:var(--muted); cursor:pointer; }
+.card-actions .icon { width:17px; height:17px; }
+body .card-actions .favorite-button { width:30px; height:30px; margin:0; }
+.card-meta { display:flex; align-items:center; gap:8px; min-width:0; min-height:20px; font-size:12px; color:var(--faint); font-variant-numeric:tabular-nums; }
+body .card-meta .folder-chip { min-width:0; max-width:65%; margin:0; padding:0; border:0; background:none; color:var(--muted); font:inherit; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+.card-meta .folder-chip+.card-size::before { content:"·"; margin-right:8px; color:var(--faint); }
+body .card-meta .card-restore { margin-left:auto; padding:0; font-size:12px; }
+@media (hover:hover) and (pointer:fine) {
+  .card-actions>* { opacity:0; transition:opacity 160ms ease,scale 520ms var(--spring-bounce),color 160ms ease; }
+  .asset-card:hover .card-actions>*,.asset-card:focus-within .card-actions>*,.card-actions>.favorite-button.selected { opacity:1; }
+  .card-actions>*:hover { color:var(--ink); }
+  body .card-meta .folder-chip:hover { color:var(--ink); }
+}
+/* 手机：只留“···”（收藏、下载都在里面），已收藏的爱心照常显示。 */
+@media not ((hover:hover) and (pointer:fine)) { .card-actions .card-download,.card-actions .favorite-button:not(.selected) { display:none; } }
+.list-view .card-content { display:flex; align-items:center; gap:16px; }
+.list-view .card-title-row { flex:1; min-width:0; }
+.list-view .card-meta { flex-shrink:0; }
+.list-view .card-actions>* { opacity:1; }
+
+/* 选中、按下、拖放统一用强调色，不再有大块实心橙。 */
+.section-tool[aria-pressed="true"],html[data-theme="light"] .section-tool[aria-pressed="true"] { background:var(--primary-bg); color:var(--primary-ink); }
+/* 卡片悬停：缩略图轻轻浮起，阴影加深，带一点回弹（苹果式）。 */
+body .asset-grid:not(.list-view) .preview-button>img,body .asset-grid:not(.list-view) .preview-button>.preview-fallback,body .asset-grid:not(.list-view) .preview-button>.audio-art,body .folder-preview>.icon { transition:translate 560ms var(--spring-bounce),scale 560ms var(--spring-bounce),box-shadow 300ms ease,color 200ms ease; }
+@media (hover:hover) and (pointer:fine) {
+  body .asset-grid:not(.list-view) .asset-card:hover .preview-button:not(:disabled)>img,body .asset-grid:not(.list-view) .asset-card:hover .preview-button>.preview-fallback,body .asset-grid:not(.list-view) .asset-card:hover .preview-button>.audio-art { translate:0 -4px; scale:1.015; }
+  body .asset-grid:not(.list-view) .asset-card:hover .preview-button[data-surface="opaque"]>img { box-shadow:0 0 0 1px var(--line),0 14px 30px rgba(0,0,0,.45); }
+  html[data-theme="light"] body .asset-grid:not(.list-view) .asset-card:hover .preview-button[data-surface="opaque"]>img { box-shadow:0 0 0 1px var(--line),0 14px 28px rgba(0,0,0,.14); }
+  body .asset-grid:not(.list-view) .asset-card:hover .preview-button:not(:disabled) { background-color:var(--surface-2); }
+  body .folder-card:hover .folder-preview>.icon { translate:0 -3px; scale:1.06; }
+}
+
+/* 文件夹是入口不是素材：一行紧凑条目（图标 + 名称 + 份数），不再占一整排大方块。 */
+body .asset-grid:not(.list-view) .folder-card { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; column-gap:12px; padding:9px 8px 9px 14px; background:var(--surface); transition:background-color 200ms ease; }
+body .asset-grid:not(.list-view) .folder-card .preview-button.folder-preview { width:32px; height:32px; aspect-ratio:auto; background:transparent; outline:0; }
+body .asset-grid:not(.list-view) .folder-card .folder-preview>.icon { width:26px; color:var(--muted); }
+body .asset-grid:not(.list-view) .folder-card .card-content { padding:0; gap:0; }
+body .asset-grid:not(.list-view) .folder-card .card-title-row { min-height:26px; }
+body .asset-grid:not(.list-view) .folder-card .card-meta { min-height:16px; }
+@media (hover:hover) and (pointer:fine) {
+  body .asset-grid:not(.list-view) .folder-card:hover { background:var(--surface-2); }
+  body .asset-grid:not(.list-view) .folder-card:hover .preview-button.folder-preview:not(:disabled) { background:transparent; }
+  body .asset-grid:not(.list-view) .folder-card:hover .folder-preview>.icon { translate:0 -2px; scale:1.08; color:var(--ink); }
+}
+body .asset-grid:not(.list-view) .folder-card.is-drop-target { outline:2px solid var(--accent); outline-offset:-2px; background:var(--surface-2); }
+body.is-moving-assets .asset-grid:not(.list-view) .folder-card { outline:1px dashed var(--faint); outline-offset:-1px; }
+
+/* 分组小标题：文件夹 / 图片 / 动图 / 视频 / 音频，独占一行，离下面的卡片近、离上一组远。 */
+.grid-group { grid-column:1/-1; display:flex; align-items:baseline; gap:8px; margin:14px 0 -16px; font-size:15px; font-weight:600; line-height:1.3; color:var(--ink); }
+.grid-group:first-child { margin-top:0; }
+.grid-group>span { font-size:12px; font-weight:400; color:var(--faint); font-variant-numeric:tabular-nums; }
+.list-view .grid-group { margin:18px 0 4px; }
+.list-view .grid-group:first-child { margin-top:0; }
+
+/* 底栏缩小：取消 1.15 倍放大，窄一些、矮一些；选中项是浅色底块，图标点出强调色。 */
+body .library-dock { transform:translateX(-50%); width:min(660px,calc(100vw - 200px)); max-width:none; gap:8px; }
+body .floating-search { width:86%; }
+body .floating-search .search,html[data-theme="light"] body .floating-search .search { height:42px; min-height:42px; padding:0 15px; background:var(--float); border:1px solid var(--line); box-shadow:var(--float-shadow),var(--float-edge); backdrop-filter:var(--glass); -webkit-backdrop-filter:var(--glass); }
+body .floating-search .search input { font-size:14px; color:var(--ink); }
+body .floating-search .search input::placeholder { color:var(--faint); }
+body .floating-search .search>span,body .floating-search #clear-search,html[data-theme="light"] body .floating-search .search>span,html[data-theme="light"] body .floating-search #clear-search { color:var(--muted); }
+body .floating-search .search:focus-within,html[data-theme="light"] body .floating-search .search:focus-within { border-color:var(--line); background:var(--float); box-shadow:var(--float-shadow),var(--float-edge),inset 0 -2px 0 var(--accent); }
+body .category-shelf,html[data-theme="light"] body .category-shelf { padding:0; background:var(--float); border:1px solid var(--line); box-shadow:var(--float-shadow),var(--float-edge); backdrop-filter:var(--glass); -webkit-backdrop-filter:var(--glass); }
+/* 分类条自身就是胶囊形的裁剪框（内边距 4px），选中块越界时按胶囊内壁裁切。 */
+body .library-dock #sidebar-filters { padding:4px; border-radius:999px; overflow-x:auto; overflow-y:hidden; }
+body .library-dock .nav-item { min-height:38px; padding:9px 10px; gap:7px; font-size:13px; font-weight:500; color:var(--muted); }
+body .library-dock .nav-item.active { color:var(--ink); font-weight:500; }
+body .library-dock .nav-item.active .icon { color:var(--ink); }
+body .library-dock .nav-item .icon { width:17px; height:17px; }
+body .library-dock .nav-item b { padding:1px 5px; border-radius:6px; background:var(--surface-2); color:inherit; font-size:12px; font-weight:500; }
+/* 选中项：抬起的浅色胶囊（苹果分段控件），底部一条短强调色（Windows 选中标记），一起滑动。 */
+.nav-indicator { background:var(--surface-3); box-shadow:var(--float-edge); }
+.nav-indicator::after { content:""; position:absolute; left:50%; bottom:4px; width:16px; height:3px; border-radius:2px; background:var(--accent); translate:-50% 0; }
+html[data-theme="light"] .nav-indicator { background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.04); }
+html[data-theme="light"] body .library-dock .nav-item { color:var(--muted); }
+html[data-theme="light"] body .library-dock .nav-item.active { color:var(--ink); }
+@media (hover:hover) and (pointer:fine) { body .library-dock .nav-item:not(.active):hover { background:transparent; color:var(--ink); } }
+@media (max-width:1100px) { body .library-dock { width:min(620px,calc(100vw - 160px)); } }
+@media (max-width:760px) {
+  body .library-dock { width:calc(100% - 32px); max-width:520px; }
+  body .floating-search { width:100%; }
+  body .floating-search .search { height:44px; min-height:44px; }
+  body .floating-search .search input { font-size:16px; }
+  body .library-dock .nav-item { min-height:40px; padding:10px 8px; }
+  body .asset-grid:not(.list-view) { gap:26px 14px; }
+  .breadcrumb h2,#library-title { font-size:20px; }
+}
+
+@media (max-width:760px) {
+  .section-heading { flex-wrap:wrap; }
+  .crumb,.crumb-separator { font-size:13px; }
+  .selection-bar { padding-left:16px; gap:4px; }
+  .selection-bar button { padding:0 12px; }
+}
+
+@media (prefers-reduced-motion:reduce) {
+  :is(.button,.icon-button,.nav-item,.avatar,.favorite-button,.preview-button,.view-back):active { scale:none; }
+  .nav-indicator.is-ready,.library-dock,.tools-menu,.folder-browser,.asset-actions { transition-duration:1ms !important; }
+  .asset-skeleton,body[data-loading="true"] #refresh-button .icon { animation:none; }
+}

@@ -2,8 +2,9 @@
   'use strict';
 
   const $ = (selector) => document.querySelector(selector);
-  const TYPES = { image: '图片', video: '视频', audio: '音频', animation: '动画', other: '其他' };
-  const TITLES = { all: '全部素材', image: '图片与背景', video: '视频素材', audio: '音效与音乐', animation: '动画与元素', other: '其他文件', favorites: '我的收藏', trash: '回收站' };
+  // 分类只有图片、视频、音频；旧目录里的“动画”并入图片，其余文件只在全部素材里出现。
+  const TYPES = { image: '图片', video: '视频', audio: '音频', animation: '图片', other: '文件' };
+  const TITLES = { all: '全部素材', image: '图片', video: '视频', audio: '音频', favorites: '我的收藏', trash: '回收站' };
   const STORAGE_KEY = 'orange-library-catalog-v1';
   const FAVORITES_KEY = 'orange-library-favorites-v1';
   const VIEW_KEY = 'orange-library-view-v1';
@@ -96,9 +97,34 @@
   let memberBusy = false;
   let memberRequest = null;
   let cloudFolderName = '';
+  let syncFollowUp = null;
+  // 网站是管理器：当前位置是网站文件夹路径（'' 为最外层）。地址栏记住位置，浏览器返回键回到上一处。
+  let currentFolder = '';
+  let selecting = false;
+  const selection = new Set();
+  let dragIds = null;
+  const VIEWS = ['all', 'image', 'video', 'audio', 'favorites', 'trash'];
+  const folderOf = asset => asset.tags.join('/');
+  const parentOf = path => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+  const within = (folder, root) => !root || folder === root || folder.startsWith(root + '/');
+  const isSpecial = (type = activeType) => type === 'favorites' || type === 'trash';
+  function readHash() {
+    const params = new URLSearchParams(location.hash.slice(1));
+    const folder = params.get('f') || '';
+    return { type: VIEWS.includes(params.get('v')) ? params.get('v') : 'all', folder: folder.length <= 1024 && folder.split('/').every(Boolean) ? folder : '' };
+  }
+  function writeHash(push) {
+    const params = new URLSearchParams();
+    if (activeType !== 'all') params.set('v', activeType);
+    if (currentFolder && !isSpecial()) params.set('f', currentFolder);
+    const hash = params.toString() ? '#' + params : '';
+    if (hash === location.hash) return;
+    history[push ? 'pushState' : 'replaceState'](null, '', hash || location.pathname + location.search);
+  }
+  ({ type: activeType, folder: currentFolder } = readHash());
   const isGoogle = () => catalog.config.provider === 'google';
   const isOpenList = () => catalog.config.provider === 'openlist';
-  const cloudName = () => isOpenList() ? '素材库后台' : isGoogle() ? 'Google Drive' : 'pCloud';
+  const cloudName = () => isOpenList() ? '素材库' : isGoogle() ? 'Google Drive' : 'pCloud';
   const cloudClient = () => isOpenList() ? window.OpenListClient : isGoogle() ? window.GoogleDriveClient : window.PCloudClient;
   const cloudAuth = () => isOpenList() ? window.OpenListAuth : isGoogle() ? window.GoogleDriveAuth : window.PCloudAuth;
   const memberSession = () => cloudAuth().get(catalog.config);
@@ -159,7 +185,7 @@
       }
       const url = await item.promise;
       if (!url || signal.aborted || !button.isConnected) return;
-      const image = element('img'); image.src = url; image.alt = asset.name; image.decoding = 'async';
+      const image = element('img'); image.src = url; image.alt = asset.name; image.decoding = 'async'; image.draggable = false;
       if (item.surface) button.dataset.surface = item.surface;
       image.addEventListener('load', () => {
         if (signal.aborted || !button.isConnected) return;
@@ -197,9 +223,28 @@
     try {
       if (!session || !data) { localStorage.removeItem(CATALOG_CACHE); return; }
       const assets = data.assets.map(asset => ({ ...asset, previewUrl: '', cachedPreview: Boolean(asset.previewUrl) }));
-      const value = JSON.stringify({ endpoint: session.endpoint, folderPath: session.folderPath, username: session.username, assets, folders: data.folders || [], folderId: data.folderId, name: data.name, access: data.access });
+      const value = JSON.stringify({ endpoint: session.endpoint, folderPath: session.folderPath, username: session.username, assets, folders: data.folders || [], favorites: data.favorites || [], folderId: data.folderId, name: data.name, access: data.access });
       if (value.length <= 2000000) localStorage.setItem(CATALOG_CACHE, value); else localStorage.removeItem(CATALOG_CACHE);
     } catch { /* 存储不可用时只是不显示上次目录。 */ }
+  }
+  function cacheFavorites() {
+    try {
+      const data = JSON.parse(localStorage.getItem(CATALOG_CACHE) || 'null');
+      if (data) localStorage.setItem(CATALOG_CACHE, JSON.stringify({ ...data, favorites: [...favorites] }));
+    } catch { /* 下次打开时以后台为准。 */ }
+  }
+  // 收藏跟着账号走；这台浏览器以前存的本机收藏，第一次登录后一并交给后台。
+  let favoritesMigrated = false;
+  async function migrateLocalFavorites() {
+    if (favoritesMigrated || !isOpenList()) return;
+    favoritesMigrated = true;
+    let local = [];
+    try { local = JSON.parse(localStorage.getItem(FAVORITES_KEY) || '[]'); } catch { return; }
+    const ids = Array.isArray(local) ? local.filter(id => cloudAssets.some(asset => asset.id === id) && !favorites.has(id)).slice(0, 500) : [];
+    try {
+      if (ids.length) { await window.OpenListClient.manage(catalog.config, 'favorite', { ids, on: true }, AbortSignal.timeout(20000)); ids.forEach(id => favorites.add(id)); cacheFavorites(); render(); }
+      localStorage.removeItem(FAVORITES_KEY);
+    } catch { favoritesMigrated = false; }
   }
 
   async function refreshCloud(notify = false) {
@@ -213,6 +258,7 @@
     const cached = !cloudAssets.length && cachedCatalog(listSession);
     if (cached) {
       cloudAssets = cached.assets; cloudFolders = cached.folders; cloudFolderId = cached.folderId; cloudFolderName = cached.name;
+      if (Array.isArray(cached.favorites)) favorites = new Set(cached.favorites);
       member = { name: listSession.username, role: listSession.role, avatarUrl: '', ...cached.access };
     }
     renderMember();
@@ -221,20 +267,26 @@
     const controller = new AbortController();
     cloudRequest = controller;
     cloudBusy = true;
-    cloudStatus(cloudAssets.length ? '' : `正在读取 ${cloudName()} 素材目录…`);
+    cloudStatus(''); // 加载中只显示占位卡片。
     render();
     const timeout = setTimeout(() => controller.abort(), isGoogle() || isOpenList() ? 60000 : 20000);
     try {
-      const data = await cloudClient().list(catalog.config, controller.signal);
+      const data = await cloudClient().list(catalog.config, controller.signal, notify);
       if (cloudRequest !== controller) return;
       cloudAssets = data.assets;
       cloudFolders = data.folders || [];
       cloudFolderId = data.folderId;
       cloudFolderName = data.name;
+      if (isOpenList()) favorites = new Set(data.favorites || []);
       if (isOpenList() && memberSession()?.username === listSession?.username) cacheCatalog(listSession, data);
-      cloudStatus(`${data.name} · ${data.assets.length} 份素材`);
-      if (notify) toast('素材已更新');
+      // 后台正在补清点云盘时，过一会儿安静地再取一次；每次打开页面最多一次，不轮询。
+      if (data.syncing && !syncFollowUp) {
+        syncFollowUp = setTimeout(() => { if (!cloudBusy && !uploading && !document.hidden) refreshCloud(); }, 8000);
+      }
+      cloudStatus('');
+      if (notify) toast('已更新');
       await refreshMember(isOpenList() && memberSession()?.token === listSession?.token ? data.access : undefined);
+      migrateLocalFavorites();
     } catch (error) {
       if (cloudRequest !== controller) return;
       const needsLogin = isOpenList() && error.code === 401;
@@ -244,8 +296,8 @@
         cacheCatalog(null); cloudAssets = []; cloudFolders = []; member = null; renderMember();
       }
       const offline = error instanceof TypeError && !controller.signal.aborted;
-      cloudStatus(needsLogin ? '请先登录素材库。' : `目录未能更新：${controller.signal.aborted ? '连接超时，请重试。' : offline ? '连不上素材库后台，请检查网络或代理。' : error.message}`, !needsLogin);
-      if (notify) toast(needsLogin ? '请先登录素材库' : '刷新失败，请重试');
+      cloudStatus(needsLogin ? '' : controller.signal.aborted ? '连接超时，请重试。' : offline ? '连不上素材库，请检查网络或代理。' : error.message, !needsLogin);
+      if (notify) toast(needsLogin ? '请先登录' : '刷新失败，请重试');
     } finally {
       clearTimeout(timeout);
       if (cloudRequest === controller) { cloudBusy = false; $('#refresh-button').disabled = false; render(); }
@@ -276,10 +328,13 @@
     $('#member-recheck').hidden = !signedIn;
     $('#member-recheck').disabled = memberBusy;
     $('#member-login-message').textContent = isOpenList() ? '' : catalog.config.clientId ? '' : `管理员正在配置 ${cloudName()} 登录。`;
-    $('#member-title').textContent = '成员登录';
+    $('#member-title').textContent = '登录';
     if (isOpenList()) {
       // 会话在本机就视为已登录；权限随目录一起返回，不显示核实过程。
-      $('#member-title').textContent = signedIn ? member?.name || memberSession().username : '成员登录';
+      const name = member?.name || memberSession()?.username || '';
+      $('#member-title').textContent = signedIn ? name : '登录';
+      $('#member-avatar').setAttribute('aria-label', signedIn ? name : '登录');
+      $('#member-avatar').title = signedIn ? name : '登录';
       $('#member-info').textContent = signedIn ? '已登录' : '';
       $('#member-permission-help').textContent = '';
       $('#member-status').textContent = message || (member && !member.canUpload ? '此账号没有上传权限' : '');
@@ -289,7 +344,7 @@
     $('#upload-button').setAttribute('aria-label', '上传素材');
     $('#upload-button').title = '上传素材';
     $('#trash-button').hidden = !isOpenList() || !signedIn;
-    $('#new-folder-button').hidden = !canManage();
+    $('#backup-button').hidden = !canManage();
   }
 
   async function refreshMember(directoryAccess) {
@@ -390,7 +445,7 @@
     memberRequest?.abort(); memberRequest = null;
     let logoutError = '';
     try { await cloudAuth().logout(catalog.config); } catch (error) { logoutError = error.message; }
-    if (isOpenList()) { cloudRequest?.abort(); cacheCatalog(null); cloudAssets = []; cloudFolders = []; cloudFolderId = null; render(); cloudStatus('请登录素材库。'); }
+    if (isOpenList()) { cloudRequest?.abort(); cacheCatalog(null); cloudAssets = []; cloudFolders = []; favorites = new Set(); cloudFolderId = null; setSelecting(false); render(); cloudStatus(''); }
     member = null; memberBusy = false;
     renderMember();
     window.StudioMotion.close($('#member-dialog'));
@@ -410,11 +465,15 @@
     $('#upload-cancel').hidden = !uploading;
   }
 
+  // 在文件夹里上传就放进这个文件夹；收藏和回收站里上传放到最外层。
+  const uploadFolder = () => isSpecial() ? '' : currentFolder;
   function openUpload() {
     if (!memberSession() || !member?.canUpload || memberBusy) { openMember(); return; }
-    $('#upload-message').textContent = '可继续添加多个文件或文件夹。';
+    $('#upload-message').textContent = '';
     $('#upload-member').value = member.name;
-    $('#upload-target').textContent = `上传到：${cloudFolderName || '素材文件夹'}`;
+    // 只有在某个文件夹里上传时才需要说明去向。
+    const target = uploadFolder();
+    $('#upload-target').textContent = target ? `上传到 ${target.split('/').join(' / ')}` : '';
     renderQueue();
     window.StudioMotion.open($('#upload-dialog'));
   }
@@ -451,7 +510,7 @@
     const auth = cloudAuth();
     const previousCount = cloudAssets.length;
     const folderCache = new Map();
-    folderCache.virtualBase = $('#folder-filter').value === '*' ? [] : JSON.parse($('#folder-filter').value);
+    folderCache.virtualBase = uploadFolder() ? uploadFolder().split('/') : [];
     let completed = 0;
     renderQueue();
     for (const item of uploadQueue) {
@@ -468,11 +527,11 @@
     uploadRequest = null;
     renderQueue();
     await refreshCloud();
-    $('#upload-message').textContent = canceled ? '已停止上传。请刷新目录检查已完成的文件。' : !completed ? '本次没有文件上传成功，请查看上方错误。' : `本次 ${completed} 个文件上传成功。${cloudAssets.length <= previousCount ? '目录暂未出现新文件，请稍后刷新；不要重复上传。' : '目录已更新。'}`;
+    $('#upload-message').textContent = canceled ? '已停止上传，已完成的文件会保留。' : !completed ? '没有文件上传成功，请看上面的提示。' : `已上传 ${completed} 个文件${cloudAssets.length <= previousCount ? '，目录稍后刷新可见，不用重复上传。' : '。'}`;
   });
   $('#upload-cancel').addEventListener('click', () => uploadRequest?.abort());
   $('#upload-dialog').addEventListener('cancel', (event) => { if (uploading) { event.preventDefault(); $('#upload-message').textContent = '请先点击“停止上传”，再关闭窗口。'; } });
-  $('#refresh-button').addEventListener('click', () => { if (!isCloud()) toast('素材库尚未连接，请联系管理员。'); else { toast('正在刷新素材…'); refreshCloud(true); } });
+  $('#refresh-button').addEventListener('click', () => { if (!isCloud()) toast('素材库尚未连接，请联系管理员。'); else refreshCloud(true); });
 
   const dropOverlay = $('#drop-overlay');
   let dragDepth = 0, readingDrop = false;
@@ -481,13 +540,13 @@
     if (!readingDrop) { dropOverlay.hidden = true; document.body.classList.remove('is-file-dragging'); }
   }
   window.addEventListener('dragenter', event => {
-    if (!window.StudioUploadDrop.hasFiles(event.dataTransfer)) return;
+    if (dragIds || !window.StudioUploadDrop.hasFiles(event.dataTransfer)) return; // 在网页里拖卡片整理，不是上传。
     event.preventDefault(); dragDepth++;
     dropOverlay.hidden = false; document.body.classList.add('is-file-dragging');
-    $('#drop-label').textContent = uploading ? '正在上传，请稍后添加' : !memberSession() || !member?.canUpload ? '请先登录，再拖入上传' : '松开即可上传文件或文件夹';
+    $('#drop-label').textContent = uploading ? '正在上传，请稍后添加' : !memberSession() || !member?.canUpload ? '请先登录，再拖入上传' : '松开上传';
   }, true);
   window.addEventListener('dragover', event => {
-    if (!window.StudioUploadDrop.hasFiles(event.dataTransfer) && !dragDepth) return;
+    if (dragIds || (!window.StudioUploadDrop.hasFiles(event.dataTransfer) && !dragDepth)) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = uploading || readingDrop ? 'none' : 'copy';
   }, true);
@@ -497,7 +556,7 @@
     if (--dragDepth <= 0 || (!event.relatedTarget && (event.clientX <= 0 || event.clientY <= 0 || event.clientX >= innerWidth || event.clientY >= innerHeight))) hideDrop();
   }, true);
   window.addEventListener('drop', async event => {
-    if (!window.StudioUploadDrop.hasFiles(event.dataTransfer) && !dragDepth) return;
+    if (dragIds || (!window.StudioUploadDrop.hasFiles(event.dataTransfer) && !dragDepth)) return;
     event.preventDefault(); event.stopPropagation(); hideDrop();
     if (uploading || readingDrop) { toast('请等待当前上传完成，再添加文件。'); return; }
     if (!memberSession() || !member?.canUpload || memberBusy) {
@@ -546,7 +605,7 @@
     const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
     svg.classList.add('icon'); svg.setAttribute('aria-hidden','true');
     const use = document.createElementNS('http://www.w3.org/2000/svg','use');
-    use.setAttribute('href', `assets/ui-icons.svg?v=20261002-favorites1#${name}`); svg.append(use);
+    use.setAttribute('href', `assets/ui-icons.svg?v=20261002-folders1#${name}`); svg.append(use);
     return svg;
   }
   function decorateChrome() {
@@ -647,7 +706,7 @@
   function audioArt() {
     const artwork = element('div', 'audio-art');
     artwork.setAttribute('aria-hidden', 'true');
-    for (let index = 0; index < 45; index++) {
+    for (let index = 0; index < 28; index++) {
       const bar = element('span');
       bar.style.height = `${10 + Math.abs(Math.sin(index * .68) * Math.cos(index * .13)) * 65}px`;
       artwork.append(bar);
@@ -655,9 +714,10 @@
     return artwork;
   }
 
-  function fallback(type, label = '登记小预览后显示') {
+  function fallback(type, label = '') {
     const node = element('div', 'preview-fallback');
-    node.append(icon({ image:'image', video:'play', audio:'music-notes', animation:'sparkle', other:'file' }[type] || 'file'), element('small', '', label));
+    node.append(icon({ image:'image', video:'play', audio:'music-notes', animation:'image', other:'file' }[type] || 'file'));
+    if (label) node.append(element('small', '', label));
     return node;
   }
 
@@ -675,15 +735,176 @@
     button.setAttribute('aria-pressed', String(selected));
   }
 
-  function toggleFavorite(asset) {
-    const next = new Set(favorites);
-    if (next.has(asset.id)) next.delete(asset.id); else next.add(asset.id);
-    try { localStorage.setItem(FAVORITES_KEY, JSON.stringify([...next])); }
-    catch { toast('浏览器无法保存收藏，请检查本地存储设置。'); return; }
+  async function toggleFavorite(asset) {
+    const on = !favorites.has(asset.id), next = new Set(favorites);
+    if (on) next.add(asset.id); else next.delete(asset.id);
+    if (!isOpenList()) {
+      try { localStorage.setItem(FAVORITES_KEY, JSON.stringify([...next])); }
+      catch { toast('浏览器无法保存收藏，请检查本地存储设置。'); return; }
+    }
     favorites = next;
+    showFavorite(asset, true);
+    toast(on ? '已收藏' : '已取消收藏');
+    if (!isOpenList()) return;
+    try { await window.OpenListClient.manage(catalog.config, 'favorite', { ids: [asset.id], on }, AbortSignal.timeout(20000)); cacheFavorites(); }
+    catch (error) {
+      // 没存上就恢复原样，免得手机和电脑看到的不一样。
+      favorites = new Set(favorites); if (on) favorites.delete(asset.id); else favorites.add(asset.id);
+      showFavorite(asset, false); toast(error.message);
+    }
+  }
+  function showFavorite(asset, pop) {
     render();
-    toast(favorites.has(asset.id) ? '已收藏' : '已取消收藏');
-    if (activeAsset) updateDetailFavorite();
+    if (pop) window.StudioMotion.pop($(`.asset-card[data-id="${CSS.escape(asset.id)}"] .favorite-button`));
+    if (activeAsset) { updateDetailFavorite(); if (pop) window.StudioMotion.pop($('#detail-favorite .icon')); }
+  }
+
+  // 多选：点“多选”或按住 Ctrl / Shift 点卡片；选中后可一起移动或移入回收站。
+  const canSelect = asset => canManage() && asset.managed && !asset.deleted && !asset.pending && activeType !== 'trash';
+  function setSelecting(on) {
+    selecting = on;
+    if (!on) selection.clear();
+    document.body.classList.toggle('is-selecting', on);
+    $('#select-button').setAttribute('aria-pressed', String(on));
+    const bar = $('#selection-bar');
+    if (on && bar.hidden) window.StudioMotion.reveal(bar);
+    else if (!on && !bar.hidden) window.StudioMotion.conceal(bar);
+    document.querySelectorAll('.asset-card[data-id]').forEach(card => card.classList.toggle('is-selected', selection.has(card.dataset.id)));
+    updateSelection();
+  }
+  function toggleSelected(id, card) {
+    if (!selecting) setSelecting(true);
+    if (selection.has(id)) selection.delete(id); else selection.add(id);
+    card.classList.toggle('is-selected', selection.has(id));
+    if (selection.has(id)) window.StudioMotion.pop(card.querySelector('.select-mark'));
+    updateSelection();
+  }
+  function updateSelection() {
+    $('#selection-count').textContent = selection.size ? `已选 ${selection.size} 项` : '点选素材';
+    $('#selection-move').disabled = $('#selection-trash').disabled = !selection.size;
+  }
+
+  // 桌面上可把卡片拖进文件夹卡片或路径里的上一级；拖选中的卡片会带上全部已选。
+  function endDrag() {
+    dragIds = null;
+    document.body.classList.remove('is-moving-assets');
+    document.querySelectorAll('.is-drop-target').forEach(node => node.classList.remove('is-drop-target'));
+  }
+  function draggable(card, asset) {
+    if (!canSelect(asset) || !matchMedia('(hover:hover) and (pointer:fine)').matches) return;
+    card.draggable = true;
+    card.addEventListener('dragstart', event => {
+      dragIds = selection.has(asset.id) ? [...selection] : [asset.id];
+      event.dataTransfer.clearData();
+      event.dataTransfer.setData('application/x-studio-assets', dragIds.join('\n'));
+      event.dataTransfer.effectAllowed = 'move';
+      document.body.classList.add('is-moving-assets');
+    });
+    card.addEventListener('dragend', endDrag);
+  }
+  function dropTarget(node, folder) {
+    if (!canManage()) return;
+    node.addEventListener('dragover', event => { if (!dragIds) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; node.classList.add('is-drop-target'); });
+    node.addEventListener('dragleave', event => { if (!node.contains(event.relatedTarget)) node.classList.remove('is-drop-target'); });
+    node.addEventListener('drop', event => { if (!dragIds) return; event.preventDefault(); const ids = dragIds; endDrag(); moveAssets(ids, folder); });
+  }
+  // 移动只改网站目录：先在页面上挪过去，后台确认失败再挪回来。
+  async function moveAssets(ids, folder) {
+    const moving = ids.filter(id => { const asset = cloudAssets.find(item => item.id === id); return asset && folderOf(asset) !== folder; });
+    if (!moving.length) return;
+    if (manageBusy || uploading) { toast('请先等待当前操作完成。'); return; }
+    manageBusy = true;
+    const before = cloudAssets;
+    const tags = folder ? folder.split('/') : [];
+    cloudAssets = cloudAssets.map(asset => moving.includes(asset.id) ? { ...asset, tags, folder: folder || '根目录' } : asset);
+    if (selecting) setSelecting(false);
+    render();
+    try {
+      await window.OpenListClient.manage(catalog.config, 'move', { ids: moving, folder }, AbortSignal.timeout(30000));
+      toast(`已移动 ${moving.length} 项到“${folder ? folder.split('/').at(-1) : TITLES.all}”`);
+      manageBusy = false;
+      await refreshCloud();
+    } catch (error) { cloudAssets = before; render(); toast(error.message); }
+    finally { manageBusy = false; }
+  }
+
+  // 进入文件夹、切换分类、返回上一级都经过这里，并写进地址栏。
+  function navigate(type, folder = currentFolder, push = true) {
+    const changed = type !== activeType || (!isSpecial(type) && folder !== currentFolder);
+    activeType = type;
+    if (!isSpecial(type)) currentFolder = folder;
+    if (selecting) setSelecting(false);
+    writeHash(push && changed);
+    render();
+    const top = $('.library').getBoundingClientRect().top;
+    if (changed && top < 0) window.scrollTo({ top: scrollY + top - 12, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  }
+  window.addEventListener('popstate', () => {
+    ({ type: activeType, folder: currentFolder } = readHash());
+    if (selecting) setSelecting(false);
+    render();
+  });
+
+  function renderBreadcrumb(special) {
+    const nav = $('#breadcrumb');
+    const parts = special ? [] : currentFolder.split('/').filter(Boolean);
+    const crumbs = [[TITLES[activeType], ''], ...parts.map((name, index) => [name, parts.slice(0, index + 1).join('/')])];
+    const key = JSON.stringify([activeType, crumbs, canManage()]);
+    if (nav.dataset.key === key) return;
+    const first = !nav.dataset.key;
+    nav.dataset.key = key;
+    nav.replaceChildren(...crumbs.flatMap(([label, path], index) => {
+      const separator = element('span', 'crumb-separator', '›'); separator.setAttribute('aria-hidden', 'true');
+      let node;
+      if (index === crumbs.length - 1) { node = element('h2', '', label); node.id = 'library-title'; }
+      else {
+        node = element('button', 'crumb', label); node.type = 'button';
+        node.addEventListener('click', () => navigate(activeType, path));
+        dropTarget(node, path);
+      }
+      return index ? [separator, node] : [node];
+    }));
+    if (!first) window.StudioMotion.swap(nav);
+  }
+
+  function folderCardFor(path, count) {
+    const name = path.split('/').at(-1);
+    const card = element('article', 'asset-card folder-card');
+    card.dataset.id = 'folder:' + path;
+    const open = element('button', 'preview-button folder-preview'); open.type = 'button';
+    open.setAttribute('aria-label', `打开文件夹 ${name}`);
+    open.append(icon('folder-fill'));
+    open.addEventListener('click', () => navigate(activeType, path));
+    const content = element('div', 'card-content');
+    const titleRow = element('div', 'card-title-row');
+    const title = element('button', 'card-title', name); title.title = name;
+    title.addEventListener('click', () => navigate(activeType, path));
+    const actions = element('div', 'card-actions');
+    if (canManage()) {
+      const more = element('button', 'asset-menu-button'); more.type = 'button';
+      more.setAttribute('aria-label', `整理文件夹 ${name}`); more.title = '重命名、移动或删除';
+      more.append(moreIcon());
+      more.addEventListener('click', () => openManage('folder-edit', { folder: path }));
+      actions.append(more);
+    }
+    titleRow.append(title, actions);
+    const meta = element('div', 'card-meta'); meta.append(element('span', 'card-size', count ? `${count} 份` : '空文件夹'));
+    content.append(titleRow, meta);
+    card.append(open, content);
+    dropTarget(card, path);
+    return card;
+  }
+
+  function downloadLink(asset) {
+    const download = element('a', 'card-download');
+    download.append(icon('file-download'));
+    download.title = '下载';
+    download.href = asset.cloud ? cloudClient().downloadUrl(catalog.config, asset) : safeUrl(asset.sourceUrl);
+    download.setAttribute('aria-label', `下载 ${asset.name}${asset.cloud && asset.provider === 'pcloud' ? '（ZIP）' : ''}`);
+    if (asset.demo) download.download = asset.sourceUrl.split('/').pop();
+    if (asset.provider === 'google') { download.target = '_blank'; download.rel = 'noopener noreferrer'; }
+    if (asset.provider === 'openlist') download.addEventListener('click', event => downloadOpenList(event, asset));
+    return download;
   }
 
   function cardFor(asset) {
@@ -692,121 +913,97 @@
     const preview = element('button', 'preview-button');
     if (asset.type === 'video') preview.dataset.surface = 'opaque';
     preview.setAttribute('aria-label', `预览 ${asset.name}`);
-    // 先显示占位图，进入可见区域后读取小型缩略图；视频不自动播放。
+    // 先显示占位，进入可见区域后读取小型缩略图；视频不自动播放。
     if (asset.type === 'audio') preview.append(audioArt());
-    else preview.append(fallback(asset.type, asset.pending ? '移动待确认' : asset.deleted ? '已移入回收站' : '点击预览'));
-    const ext = asset.name.split('.').pop();
-    preview.append(element('span', 'card-type', /^[a-z0-9]{1,6}$/i.test(ext) ? ext.toUpperCase() : TYPES[asset.type]));
-    preview.addEventListener('click', () => openDetail(asset));
+    else preview.append(fallback(asset.type, asset.pending ? '移动待确认' : ''));
+    const mark = element('span', 'select-mark'); mark.setAttribute('aria-hidden', 'true'); mark.append(icon('check'));
+    preview.append(mark);
+    card.classList.toggle('is-selected', selection.has(asset.id));
+    // 多选时点卡片是选中；按住 Ctrl / Shift 点卡片直接进入多选。
+    const activate = event => {
+      if (canSelect(asset) && (selecting || event.ctrlKey || event.metaKey || event.shiftKey)) { event.preventDefault(); toggleSelected(asset.id, card); return; }
+      openDetail(asset);
+    };
+    preview.addEventListener('click', activate);
     const content = element('div', 'card-content');
     const titleRow = element('div', 'card-title-row');
-    const title = element('button', 'card-title', asset.name);
-    title.addEventListener('click', () => openDetail(asset));
-    const favorite = element('button', 'favorite-button');
-    favoriteLabel(favorite, asset);
-    favorite.addEventListener('click', () => toggleFavorite(asset));
-    if (asset.deleted) favorite.hidden = true;
-    titleRow.append(title, favorite);
-    if (asset.managed && canManage()) {
-      const actions = element('button', 'asset-menu-button'); actions.type = 'button';
-      actions.setAttribute('aria-label', `管理 ${asset.name}`); actions.title = '整理素材';
-      actions.append(moreIcon());
-      actions.addEventListener('click', () => showAssetActions(actions, asset));
-      titleRow.append(actions);
+    const title = element('button', 'card-title', asset.name); title.title = asset.name;
+    title.addEventListener('click', activate);
+    // 操作收在名称右侧：电脑上悬停才出现，手机上只留“···”；已收藏的爱心一直显示。
+    const actions = element('div', 'card-actions');
+    const live = !asset.deleted && !asset.pending;
+    if (live) {
+      const favorite = element('button', 'favorite-button'); favorite.type = 'button';
+      favoriteLabel(favorite, asset);
+      favorite.addEventListener('click', () => toggleFavorite(asset));
+      actions.append(favorite, downloadLink(asset));
     }
-    const bottom = element('div', 'card-bottom');
-    bottom.append(element('span', '', `${asset.member || '未署名'} · ${asset.date.slice(5).replace('-', '/')}`), element('span', asset.demo ? 'demo-tag' : '', fileSize(asset)));
-    const download = element('a', 'card-download');
-    download.append(icon('file-download'), document.createTextNode(asset.provider === 'google' || asset.provider === 'openlist' || asset.demo ? '下载' : 'ZIP'));
-    download.href = asset.cloud ? cloudClient().downloadUrl(catalog.config, asset) : safeUrl(asset.sourceUrl);
-    download.setAttribute('aria-label', `下载 ${asset.name}${asset.cloud && asset.provider === 'pcloud' ? '（ZIP）' : ''}`);
-    if (asset.demo) download.download = asset.sourceUrl.split('/').pop();
-    if (asset.provider === 'google') { download.target = '_blank'; download.rel = 'noopener noreferrer'; }
-    if (asset.provider === 'openlist') download.addEventListener('click', event => downloadOpenList(event, asset));
-    bottom.append(download);
-    if (asset.deleted || asset.pending) {
-      preview.disabled = true; title.disabled = true; download.hidden = true;
+    if (live || canManage()) {
+      const more = element('button', 'asset-menu-button'); more.type = 'button';
+      more.setAttribute('aria-label', `更多操作 ${asset.name}`); more.title = '更多';
+      more.append(moreIcon());
+      more.addEventListener('click', () => showAssetActions(more, asset, card));
+      actions.append(more);
+    }
+    titleRow.append(title, actions);
+    // 第二行浅色信息：不在当前文件夹时先写它在哪（点一下过去），再写大小。
+    const meta = element('div', 'card-meta');
+    const place = folderOf(asset);
+    const relative = !isSpecial() && currentFolder && within(place, currentFolder) ? place.slice(currentFolder.length + 1) : place;
+    if (asset.cloud && relative) {
+      const chip = element('button', 'folder-chip', relative.split('/').join(' / ')); chip.type = 'button';
+      chip.title = `打开文件夹 ${place.split('/').join(' / ')}`;
+      chip.addEventListener('click', () => navigate('all', place));
+      meta.append(chip);
+    }
+    meta.append(element('span', asset.demo ? 'card-size demo-tag' : 'card-size', fileSize(asset)));
+    if (!live) {
+      preview.disabled = true; title.disabled = true;
       if (canManage()) {
-        const restore = element('button', 'card-restore', asset.pending ? '重试移动' : '恢复');
+        const restore = element('button', 'card-restore', asset.pending ? '重试移动' : '恢复'); restore.type = 'button';
         restore.addEventListener('click', () => openManage(asset.pending ? (asset.deleted ? 'restore' : 'trash') : 'restore', asset));
-        bottom.append(restore);
+        meta.append(restore);
       }
     }
-    content.append(titleRow);
-    const folder = element('button', 'folder-chip', asset.tags.length ? asset.tags.join(' / ') : '根目录');
-    folder.title = `按文件夹筛选：${folder.textContent}`;
-    folder.addEventListener('click', () => { $('#folder-filter').value = JSON.stringify(asset.tags); render(); });
-    if (asset.cloud) content.append(folder);
-    content.append(bottom);
+    content.append(titleRow, meta);
     card.append(preview, content);
+    draggable(card, asset);
     return card;
   }
 
-  function renderFolderBrowser(options, assets, selected) {
-    const selectedPath = selected === '*' ? null : JSON.parse(selected);
-    const label = selectedPath === null ? '' : selectedPath.at(-1) || '根目录';
-    const trigger = $('#folder-browser-button');
-    const caption = $('#current-folder-name');
-    caption.textContent = label; caption.hidden = selectedPath === null;
-    trigger.classList.toggle('is-selected', selectedPath !== null);
-    trigger.title = selectedPath === null ? '浏览文件夹' : `当前文件夹：${selectedPath.join(' / ') || '根目录'}`;
-    trigger.setAttribute('aria-label', selectedPath === null ? '浏览文件夹' : `浏览文件夹，当前：${selectedPath.join(' / ') || '根目录'}`);
-    trigger.disabled = !assets.length && !cloudFolders.length && !canManage();
-    $('#folder-browser-list').replaceChildren(...options.map(([value, fullName]) => {
-      const parts = value === '*' ? null : JSON.parse(value);
-      const row = element('button', 'folder-option'); row.type = 'button';
-      const name = parts === null ? '全部素材' : parts.at(-1) || '根目录';
-      const count = assets.filter(asset => parts === null || (parts.length === 0 ? !asset.tags.length : parts.every((part, index) => asset.tags[index] === part))).length;
-      row.append(icon(parts === null ? 'squares-four' : 'folder'), element('span', 'folder-option-name', name), element('span', 'folder-option-count', String(count)));
-      row.style.setProperty('--folder-depth', String(Math.min(Math.max((parts?.length || 1) - 1, 0), 4)));
-      row.title = fullName; row.setAttribute('aria-label', `${fullName}，${count} 份素材`);
-      row.setAttribute('aria-pressed', String(value === selected));
-      row.addEventListener('click', () => { $('#folder-filter').value = value; $('#folder-browser').hidePopover(); render(); trigger.focus(); });
-      if (canManage() && parts?.length) {
-        const wrapper = element('div', 'folder-option-row');
-        const edit = element('button', 'folder-edit'); edit.type = 'button'; edit.append(moreIcon());
-        edit.setAttribute('aria-label', `管理文件夹 ${fullName}`); edit.title = '修改文件夹';
-        edit.addEventListener('click', () => { $('#folder-browser').hidePopover(); openManage('folder-edit', { folder: parts.join('/') }); });
-        wrapper.append(row, edit); return wrapper;
-      }
-      return row;
-    }));
-  }
-
-  function positionFolderBrowser() {
-    const menu = $('#folder-browser');
-    if (!menu.matches(':popover-open')) return;
-    const rect = $('#folder-browser-button').getBoundingClientRect();
-    const width = Math.min(320, window.innerWidth - 32);
-    menu.style.width = `${width}px`;
-    menu.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - width - 16))}px`;
-    menu.style.top = `${Math.max(16, Math.min(rect.bottom + 8, window.innerHeight - menu.offsetHeight - 16))}px`;
+  // 同类放一起：混在一起的列表按 图片 → 动图 → 视频 → 音频 分组，各组内再按所选顺序排。
+  const KINDS = [['image', '图片'], ['gif', '动图'], ['video', '视频'], ['audio', '音频'], ['other', '其他']];
+  const kindOf = asset => asset.type === 'animation' || (asset.type === 'image' && /.(gif|apng)$/i.test(asset.name)) ? 'gif' : KINDS.some(([kind]) => kind === asset.type) ? asset.type : 'other';
+  const kindRank = asset => KINDS.findIndex(([kind]) => kind === kindOf(asset));
+  function groupHeading(id, label, count) {
+    const heading = element('h3', 'grid-group', label);
+    heading.dataset.id = 'group:' + id;
+    heading.append(element('span', '', String(count)));
+    return heading;
   }
 
   function render() {
     const term = $('#search-input').value.trim().toLocaleLowerCase('zh-CN');
     const sort = $('#sort-select').value;
+    const special = isSpecial();
     const assets = allAssets();
-    const folderSelect = $('#folder-filter');
-    const previousFolder = folderSelect.value;
-    const folders = new Map([['*', '全部文件夹'], ['[]', '根目录']]);
-    for (const folder of cloudFolders) folders.set(JSON.stringify(folder.split('/')), folder.split('/').join(' / '));
-    for (const asset of assets) {
-      for (let index = 1; index <= asset.tags.length; index++) {
-        const path = asset.tags.slice(0, index);
-        folders.set(JSON.stringify(path), path.join(' / '));
-      }
-    }
-    const options = [...folders].sort((a, b) => a[0] === '*' ? -1 : b[0] === '*' ? 1 : a[0] === '[]' ? -1 : b[0] === '[]' ? 1 : a[1].localeCompare(b[1], 'zh-CN'));
-    folderSelect.replaceChildren(...options.map(([value, label]) => { const option = element('option', '', label); option.value = value; return option; }));
-    folderSelect.value = folders.has(previousFolder) ? previousFolder : '*';
-    renderFolderBrowser(options, assets, folderSelect.value);
-    const path = folderSelect.value === '*' ? null : JSON.parse(folderSelect.value);
-    const visible = assets.filter((asset) => {
-      const matchesType = activeType === 'all' || activeType === 'trash' || (activeType === 'favorites' ? favorites.has(asset.id) : asset.type === activeType);
-      const matchesFolder = path === null || path.length === 0 ? path === null || asset.tags.length === 0 : path.every((part, index) => asset.tags[index] === part);
-      return matchesType && matchesFolder && [asset.name, asset.description, asset.member, ...asset.tags].join(' ').toLocaleLowerCase('zh-CN').includes(term);
-    }).sort((a, b) => {
+    // 已知文件夹：后台保存的，加上素材所在路径的每一层。
+    const known = new Set(cloudFolders);
+    for (const asset of (isCloud() ? cloudAssets : catalog.assets)) if (!asset.deleted) asset.tags.forEach((_, index) => known.add(asset.tags.slice(0, index + 1).join('/')));
+    if (currentFolder && !cloudBusy && isCloud() && memberSession() && !known.has(currentFolder)) { currentFolder = ''; writeHash(false); }
+    // 全部素材且没有搜索时像文件管理器：先列下一层文件夹，再列这一层的素材。
+    // 图片/视频/音频和搜索则列出当前位置及其所有下层里符合的素材。
+    const browse = activeType === 'all' && !term;
+    const matchesTerm = asset => !term || [asset.name, asset.description, asset.member, ...asset.tags].join(' ').toLocaleLowerCase('zh-CN').includes(term);
+    const visible = assets.filter(asset => {
+      if (activeType === 'trash') return matchesTerm(asset);
+      if (activeType === 'favorites') return favorites.has(asset.id) && matchesTerm(asset);
+      const place = folderOf(asset);
+      if (browse ? place !== currentFolder : !within(place, currentFolder)) return false;
+      const matchesType = activeType === 'all' || (activeType === 'image' ? ['image', 'animation'].includes(asset.type) : asset.type === activeType);
+      return matchesType && matchesTerm(asset);
+    }).sort((a, b) => kindRank(a) - kindRank(b) || compare(a, b));
+    function compare(a, b) {
       if (sort === 'name') return a.name.localeCompare(b.name, 'zh-CN');
       if (sort === 'largest' || sort === 'smallest') {
         if (a.sizeMB === null) return b.sizeMB === null ? 0 : 1;
@@ -814,39 +1011,62 @@
         return sort === 'largest' ? b.sizeMB - a.sizeMB : a.sizeMB - b.sizeMB;
       }
       return sort === 'oldest' ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date);
-    });
+    }
+    const subfolders = browse ? [...known].filter(path => parentOf(path) === currentFolder).sort((a, b) => a.localeCompare(b, 'zh-CN')) : [];
     $('#asset-grid').classList.toggle('list-view', activeView === 'list');
     filteredAssets = visible;
     document.body.dataset.loading = String(cloudBusy);
-    window.StudioMotion.grid($('#asset-grid'), visible.map(cardFor));
-    if (cloudBusy && !visible.length) {
+    const countIn = path => assets.filter(asset => within(folderOf(asset), path)).length;
+    // 只有一类时不加小标题；在“图片”里把不动的那组叫“静态图片”，免得和标题重复。
+    const groups = KINDS.map(([kind, label]) => [kind, activeType === 'image' && kind === 'image' ? '静态图片' : label, visible.filter(asset => kindOf(asset) === kind)]).filter(([, , items]) => items.length);
+    const headed = groups.length + (subfolders.length ? 1 : 0) > 1;
+    const cards = [];
+    if (subfolders.length) { if (headed) cards.push(groupHeading('folders', '文件夹', subfolders.length)); cards.push(...subfolders.map(path => folderCardFor(path, countIn(path)))); }
+    for (const [kind, label, items] of groups) { if (headed) cards.push(groupHeading(kind, label, items.length)); cards.push(...items.map(cardFor)); }
+    window.StudioMotion.grid($('#asset-grid'), cards);
+    if (cloudBusy && !visible.length && !subfolders.length) {
       for (let index=0; index<6; index++) { const tile=element('div','asset-skeleton'); tile.setAttribute('aria-hidden','true'); $('#asset-grid').append(tile); }
     }
     observeThumbnails();
-    $('#empty-state').hidden = visible.length > 0 || cloudBusy;
+    const empty = !visible.length && !subfolders.length;
+    $('#empty-state').hidden = !empty || cloudBusy;
     const needsLogin = isOpenList() && !memberSession();
-    $('#empty-state h3').textContent = needsLogin ? '登录你的素材工作台' : '这里暂时没有素材';
+    // 只有确实在搜索时，才给“清除搜索”。
+    const filtered = Boolean(term);
+    $('#empty-state h3').textContent = needsLogin ? '登录后查看素材' : filtered ? '没有找到素材' : activeType === 'trash' ? '回收站是空的' : activeType === 'favorites' ? '还没有收藏' : currentFolder ? '这个文件夹是空的' : '这里暂时没有素材';
     $('#empty-login').hidden = !needsLogin;
-    $('#reset-filters').hidden = needsLogin;
-    $('#library-title').textContent = TITLES[activeType];
+    $('#reset-filters').hidden = needsLogin || !filtered;
+    renderBreadcrumb(special);
+    // 返回键：收藏、回收站回到素材；文件夹里回到上一级。
+    $('#view-back').hidden = !special && !currentFolder;
+    $('#view-back').setAttribute('aria-label', special ? '返回全部素材' : '返回上一级');
+    $('#view-back').title = $('#view-back').getAttribute('aria-label');
+    $('#select-button').hidden = !canManage() || activeType === 'trash';
+    $('#new-folder-button').hidden = !canManage() || !browse;
+    $('#search-input').placeholder = currentFolder && !special ? `在“${currentFolder.split('/').at(-1)}”中搜索` : '搜索素材';
+    $('#trash-button').classList.toggle('active', activeType === 'trash');
+    $('#trash-button').setAttribute('aria-pressed', String(activeType === 'trash'));
     const demoCount = visible.filter((asset) => asset.demo).length;
-    $('#results-text').textContent = `${visible.length} 份素材${demoCount ? ` · ${demoCount} 份演示` : ''}${term ? ` · 搜索“${term}”` : ''}`;
+    $('#results-text').textContent = cloudBusy && empty ? '' : `${subfolders.length ? `${subfolders.length} 个文件夹 · ` : ''}${visible.length} 份${demoCount ? ` · ${demoCount} 份演示` : ''}`;
     $('#nav-count').textContent = (isCloud() ? cloudAssets : catalog.assets).filter(a => !a.deleted).length;
     $('#refresh-button').disabled = cloudBusy;
     $('#draft-notice').hidden = !draft;
-    $('#footer-status').textContent = isCloud() ? `${cloudName()} 自动目录` : draft ? '本机设置草稿 · 尚未发布' : '演示目录 · 尚未接入真实仓库';
-    $('#hosting-provider').textContent = cloudName();
-    $('#upload-duplicate-note').textContent = isOpenList() ? '文件夹层级由网站保存；原文件统一存入云盘。空文件夹不上传。' : isGoogle() ? '同名文件保留为新文件。' : '同名文件自动改名。';
+    $('#footer-status').textContent = isCloud() ? '' : draft ? '本机设置草稿 · 尚未发布' : '演示目录 · 尚未接入真实仓库';
+    $('#upload-duplicate-note').textContent = isOpenList() ? '' : isGoogle() ? '同名文件保留为新文件。' : '同名文件自动改名。';
     document.querySelectorAll('[data-view]').forEach(button => {
       const selected = button.dataset.view === activeView;
       button.classList.toggle('active', selected);
       button.setAttribute('aria-pressed', String(selected));
     });
+    let activeCategory = null;
     document.querySelectorAll('[data-type]').forEach((button) => {
       const selected = button.dataset.type === activeType;
+      if (selected) activeCategory = button;
       button.classList.toggle('active', selected);
       button.setAttribute('aria-pressed', String(selected));
     });
+    // 分类底色像灵动岛一样滑到选中项；收藏和回收站时收起。
+    window.StudioMotion.indicator($('#sidebar-filters .nav-indicator'), activeCategory);
     const inFavorites = activeType === 'favorites';
     $('#favorites-button').classList.toggle('active', inFavorites);
     $('#favorites-button').setAttribute('aria-pressed', String(inFavorites));
@@ -854,7 +1074,7 @@
     $('#favorites-button').title = inFavorites ? '返回全部素材' : '查看收藏';
   }
 
-  function setType(type) { activeType = type; render(); }
+  function setType(type) { navigate(type); }
 
   function canManage() { return isOpenList() && !!memberSession() && member?.canManage === true && !memberBusy; }
   function moreIcon() {
@@ -863,12 +1083,22 @@
     for (const x of [5, 12, 19]) { const dot = document.createElementNS(svg.namespaceURI, 'circle'); dot.setAttribute('cx', x); dot.setAttribute('cy', '12'); dot.setAttribute('r', '1.8'); dot.setAttribute('fill', 'currentColor'); svg.append(dot); }
     return svg;
   }
-  function showAssetActions(trigger, asset) {
+  function showAssetActions(trigger, asset, card) {
     const menu = $('#asset-actions');
-    const items = asset.deleted ? [['restore', '恢复素材']] : asset.pending ? [['trash', '重试移入回收站']] : [['rename', '重命名'], ['move', '移动到文件夹'], ['trash', '移入回收站']];
+    const manage = asset.managed && canManage();
+    const items = asset.deleted ? (manage ? [['restore', '恢复素材']] : [])
+      : asset.pending ? (manage ? [['trash', '重试移入回收站']] : [])
+      : [['favorite', favorites.has(asset.id) ? '取消收藏' : '收藏'], ['download', '下载'], ...(manage ? [['rename', '重命名'], ['move', '移动到…'], ['trash', '移入回收站']] : [])];
+    if (!items.length) return;
     menu.replaceChildren(...items.map(([action, label]) => {
       const button = element('button', action === 'trash' ? 'danger' : '', label); button.type = 'button';
-      button.addEventListener('click', () => { menu.hidePopover(); openManage(action, asset); }); return button;
+      button.addEventListener('click', () => {
+        menu.hidePopover();
+        if (action === 'favorite') toggleFavorite(asset);
+        else if (action === 'download') card?.querySelector('.card-download')?.click();
+        else openManage(action, asset);
+      });
+      return button;
     }));
     menu.showPopover();
     const rect = trigger.getBoundingClientRect();
@@ -881,23 +1111,27 @@
     if (manageBusy || uploading) { toast('请先等待当前操作完成。'); return; }
     const dialog = $('#manage-dialog');
     const folderAction = action.startsWith('folder-');
+    const count = asset.ids?.length || 0;
     const folder = folderAction ? asset.folder || '' : (asset.tags || []).join('/');
-    const current = action === 'folder-create' ? ($('#folder-filter').value === '*' ? '' : JSON.parse($('#folder-filter').value).join('/')) : folder;
+    const current = action === 'folder-create' || action === 'move-many' ? uploadFolder() : folder;
     manageIntent = { action, asset, current };
-    const names = { rename: '重命名素材', move: '移动素材', trash: '移入回收站', restore: '恢复素材', 'folder-create': '新建文件夹', 'folder-edit': '修改文件夹' };
+    const names = { rename: '重命名', move: '移动到', 'move-many': `移动 ${count} 项到`, trash: '移入回收站', 'trash-many': '移入回收站', restore: '恢复素材', 'folder-create': '新建文件夹', 'folder-edit': '文件夹' };
     $('#manage-title').textContent = names[action];
     $('#manage-name-label').hidden = !['rename', 'folder-create', 'folder-edit'].includes(action);
     $('#manage-name').required = !$('#manage-name-label').hidden;
-    $('#manage-name').value = folderAction ? action === 'folder-create' ? '' : folder.split('/').at(-1) : asset.name;
-    $('#manage-folder-label').hidden = !['move', 'folder-create', 'folder-edit'].includes(action);
-    const available = ['', ...cloudFolders].filter(path => !(action === 'folder-edit' && (path === folder || path.startsWith(folder + '/'))));
-    $('#manage-folder').replaceChildren(...available.map(path => { const option = element('option', '', path ? path.split('/').join(' / ') : '根目录'); option.value = path; return option; }));
-    $('#manage-folder').value = folderAction && action === 'folder-edit' ? folder.split('/').slice(0, -1).join('/') : current;
-    $('#manage-help').textContent = action === 'trash' ? `“${asset.name}”将移入回收站，云盘原文件会移动到「被移除的文件」文件夹，可恢复。` : action === 'restore' ? `恢复“${asset.name}”，原文件移回原来的云盘位置，网站归属保持不变。` : action === 'rename' ? '仅修改网站名称，请保留文件扩展名。' : '';
+    $('#manage-name').value = folderAction ? action === 'folder-create' ? '' : folder.split('/').at(-1) : asset.name || '';
+    $('#manage-folder-label').hidden = !['move', 'move-many', 'folder-create', 'folder-edit'].includes(action);
+    // 可选位置：全部已知文件夹；改文件夹时不能放进它自己里面。
+    const known = new Set(cloudFolders);
+    cloudAssets.forEach(item => item.tags.forEach((_, index) => known.add(item.tags.slice(0, index + 1).join('/'))));
+    const available = ['', ...[...known].sort((x, y) => x.localeCompare(y, 'zh-CN'))].filter(path => !(action === 'folder-edit' && within(path, folder) && path));
+    $('#manage-folder').replaceChildren(...available.map(path => { const option = element('option', '', path ? path.split('/').join(' / ') : TITLES.all); option.value = path; return option; }));
+    $('#manage-folder').value = action === 'folder-edit' ? parentOf(folder) : current;
+    $('#manage-help').textContent = action === 'trash' ? `“${asset.name}”可在回收站恢复。` : action === 'trash-many' ? `${count} 项可在回收站恢复。` : action === 'restore' ? `“${asset.name}”会回到原来的文件夹。` : action === 'rename' ? '保留扩展名。' : '';
     $('#manage-error').textContent = '';
-    $('#manage-submit').textContent = action === 'trash' ? '移入回收站' : action === 'restore' ? '恢复' : '保存';
+    $('#manage-submit').textContent = ['trash', 'trash-many'].includes(action) ? '移入回收站' : action === 'restore' ? '恢复' : ['move', 'move-many'].includes(action) ? '移动' : action === 'folder-create' ? '新建' : '保存';
     $('#manage-submit').disabled = false;
-    $('#manage-delete-folder').hidden = action !== 'folder-edit' || cloudAssets.some(a => a.tags.join('/') === folder || a.tags.join('/').startsWith(folder + '/')) || cloudFolders.some(path => path.startsWith(folder + '/'));
+    $('#manage-delete-folder').hidden = action !== 'folder-edit' || cloudAssets.some(item => within(folderOf(item), folder)) || [...known].some(path => path.startsWith(folder + '/'));
     window.StudioMotion.open(dialog);
     if (!$('#manage-name-label').hidden) { $('#manage-name').focus(); $('#manage-name').select(); }
     else $('#manage-submit').focus();
@@ -905,31 +1139,69 @@
   async function submitManage(removeFolder = false) {
     if (manageBusy || !manageIntent || !canManage()) return;
     const intent = manageIntent, { action, asset } = intent;
-    let route, body;
+    let route, body, next = null;
     const name = $('#manage-name').value.trim(), parentFolder = $('#manage-folder').value;
     if (action.startsWith('folder-')) {
-      route = 'folder'; const path = (parentFolder ? parentFolder + '/' : '') + name;
-      body = action === 'folder-create' ? { action: 'create', folder: path } : { action: removeFolder ? 'delete' : 'move', folder: intent.current, next: path };
-    } else { route = ['rename', 'move'].includes(action) ? 'edit' : action; body = { id: asset.id, revision: asset.revision, ...(action === 'rename' ? { name } : action === 'move' ? { folder: parentFolder } : {}) }; }
+      route = 'folder'; next = (parentFolder ? parentFolder + '/' : '') + name;
+      if (action === 'folder-edit' && !removeFolder && next === intent.current) { window.StudioMotion.close($('#manage-dialog')); return; }
+      body = action === 'folder-create' ? { action: 'create', folder: next } : { action: removeFolder ? 'delete' : 'move', folder: intent.current, next };
+    } else if (action === 'move-many') { route = 'move'; body = { ids: asset.ids, folder: parentFolder }; }
+    else if (action !== 'trash-many') { route = ['rename', 'move'].includes(action) ? 'edit' : action; body = { id: asset.id, revision: asset.revision, ...(action === 'rename' ? { name } : action === 'move' ? { folder: parentFolder } : {}) }; }
     manageBusy = true; $('#manage-submit').disabled = true; $('#manage-delete-folder').disabled = true;
     $('#manage-error').textContent = ''; const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 90000);
+    let done = 0;
     try {
-      await window.OpenListClient.manage(catalog.config, route, body, controller.signal);
+      if (action === 'trash-many') {
+        // 每份原件都要在云盘里真正移走，逐个确认；中途出错就停下，已完成的保留。
+        route = 'trash';
+        for (const id of asset.ids) {
+          $('#manage-help').textContent = `正在移入回收站 ${done + 1} / ${asset.ids.length}`;
+          await window.OpenListClient.manage(catalog.config, 'trash', { id }, controller.signal);
+          done++;
+        }
+      } else await window.OpenListClient.manage(catalog.config, route, body, controller.signal);
       window.StudioMotion.close($('#manage-dialog'));
       if ($('#detail-dialog').open && activeAsset?.id === asset.id) window.StudioMotion.close($('#detail-dialog'));
-      if (action.startsWith('folder-')) $('#folder-filter').value = '*';
+      if (action.endsWith('-many')) setSelecting(false);
+      // 改名、移动或删除了当前所在的文件夹时，跟着去新的位置。
+      if (action === 'folder-edit' && currentFolder && within(currentFolder, intent.current)) {
+        currentFolder = removeFolder ? parentOf(intent.current) : next + currentFolder.slice(intent.current.length);
+        writeHash(false);
+      }
+      manageBusy = false;
       await refreshCloud();
-      toast(route === 'trash' ? '已移入回收站，原文件已归档' : route === 'restore' ? '素材已恢复' : '已保存，所有成员共享这次整理');
+      toast(action === 'trash-many' ? `已移入回收站 ${done} 项` : route === 'trash' ? '已移入回收站' : route === 'restore' ? '已恢复' : route === 'move' ? `已移动 ${body.ids.length} 项` : action === 'folder-create' ? '已新建文件夹' : removeFolder ? '已删除文件夹' : '已保存');
     } catch (error) {
-      $('#manage-error').textContent = controller.signal.aborted ? '操作超时。请刷新目录，再重试移动；不要重复上传原文件。' : error.message;
+      $('#manage-error').textContent = controller.signal.aborted ? '操作超时。请刷新目录，再重试移动；不要重复上传原文件。' : (done ? `已移入 ${done} 项，其余未完成：` : '') + error.message;
+      if (done) refreshCloud();
       if (!$('#manage-dialog').open) toast($('#manage-error').textContent);
     } finally { clearTimeout(timer); manageBusy = false; $('#manage-submit').disabled = false; $('#manage-delete-folder').disabled = false; }
   }
   $('#manage-form').addEventListener('submit', event => { event.preventDefault(); submitManage(); });
   $('#manage-delete-folder').addEventListener('click', () => submitManage(true));
-  $('#new-folder-button').addEventListener('click', () => { $('#folder-browser').hidePopover(); openManage('folder-create'); });
-  $('#trash-button').addEventListener('click', () => { $('#folder-filter').value = '*'; setType('trash'); });
+  $('#new-folder-button').addEventListener('click', () => openManage('folder-create'));
+  $('#select-button').addEventListener('click', () => setSelecting(!selecting));
+  $('#selection-cancel').addEventListener('click', () => setSelecting(false));
+  $('#selection-move').addEventListener('click', () => openManage('move-many', { ids: [...selection] }));
+  $('#selection-trash').addEventListener('click', () => openManage('trash-many', { ids: [...selection] }));
+  $('#backup-button').addEventListener('click', async () => {
+    // 网站目录是仓库唯一的地图：导出一份，网站出问题时也能对上每个原件。
+    try {
+      const data = await window.OpenListClient.manage(catalog.config, 'backup', {}, AbortSignal.timeout(30000));
+      exportFile(`正经素材库目录备份-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data, null, 2), 'application/json;charset=utf-8');
+      toast('目录备份已下载');
+    } catch (error) { toast(error.message); }
+  });
+  // 回收站和收藏是临时视图；文件夹里返回上一级。Esc 先退出多选。
+  const goBack = () => isSpecial() ? navigate('all') : currentFolder ? navigate(activeType, parentOf(currentFolder)) : null;
+  $('#trash-button').addEventListener('click', () => navigate(activeType === 'trash' ? 'all' : 'trash'));
+  $('#view-back').addEventListener('click', goBack);
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    if (document.querySelector('dialog[open], [popover]:not(#toast):popover-open') || event.target.closest?.('input,textarea,select')) return;
+    if (selecting) setSelecting(false); else goBack();
+  });
   window.addEventListener('scroll', () => { if ($('#asset-actions').matches(':popover-open')) $('#asset-actions').hidePopover(); }, { passive: true });
 
   function updateDetailFavorite() {
@@ -953,7 +1225,7 @@
     finally { delete link.dataset.busy; }
   }
 
-  async function openDetail(asset) {
+  async function openDetail(asset, direction = 0) {
     stopPreview();
     const controller = new AbortController(); previewRequest = controller;
     const input = { ...catalog.config }, session = memberSession();
@@ -962,19 +1234,19 @@
     $('#detail-position').textContent = index >= 0 ? `${index+1} / ${filteredAssets.length}` : '';
     $('#detail-previous').disabled = index <= 0;
     $('#detail-next').disabled = index < 0 || index >= filteredAssets.length-1;
-    $('#detail-type').textContent = `${TYPES[asset.type]}${asset.demo ? ' / 项目演示' : ` / ${cloudName()} 原文件`}`;
+    $('#detail-type').textContent = [TYPES[asset.type], asset.demo ? '项目演示' : asset.tags.join(' / ')].filter(Boolean).join(' · ');
     $('#detail-name').textContent = asset.name;
     $('#detail-description').textContent = asset.cloud ? '' : asset.description || '';
-    $('#detail-tags').replaceChildren(tagsFor(asset));
-    $('#detail-meta').replaceChildren(element('span', '', `上传成员：${asset.member || '未署名'}`), element('span', '', `添加日期：${asset.date}`), element('span', '', fileSize(asset)));
+    $('#detail-tags').replaceChildren(...(asset.cloud ? [] : [tagsFor(asset)])); // 云端素材的文件夹已写在顶部，不再重复成标签。
+    $('#detail-meta').replaceChildren(...[asset.member, asset.date, fileSize(asset)].filter(Boolean).map(text => element('span', '', text)));
     const preview = $('#detail-preview');
     preview.dataset.surface = asset.type === 'video' ? 'opaque' : 'unknown';
     preview.replaceChildren();
-    preview.append(fallback(asset.type, '正在读取预览…'));
+    preview.append(fallback(asset.type));
     const download = $('#detail-download');
     download.hidden = false;
     download.href = asset.cloud ? cloudClient().downloadUrl(catalog.config, asset) : safeUrl(asset.sourceUrl);
-    download.replaceChildren(icon(asset.demo || asset.cloud ? 'file-download' : 'external-link'), document.createTextNode(asset.demo ? '下载演示文件' : ['google', 'openlist'].includes(asset.provider) ? '下载原文件' : asset.cloud ? '下载 ZIP' : '在 pCloud 获取原文件'));
+    download.replaceChildren(icon(asset.demo || asset.cloud ? 'file-download' : 'external-link'), document.createTextNode(asset.demo || ['google', 'openlist'].includes(asset.provider) ? '下载' : asset.cloud ? '下载 ZIP' : '在 pCloud 获取原文件'));
     if (asset.demo || asset.cloud && asset.provider !== 'google') download.removeAttribute('target'); else download.target = '_blank';
     const source = $('#detail-source');
     source.hidden = !asset.cloud || asset.provider === 'openlist';
@@ -985,7 +1257,9 @@
     else download.removeAttribute('download');
     $('#detail-note').textContent = '';
     updateDetailFavorite();
-    window.StudioMotion.open($('#detail-dialog'));
+    // 上一份/下一份只让内容滑动换入，不重新弹出整个窗口。
+    if ($('#detail-dialog').open && direction) window.StudioMotion.swap($('#detail-dialog'), direction, '#detail-preview, .detail-content > :not(.preview-navigation)');
+    else window.StudioMotion.open($('#detail-dialog'));
     $('#detail-dialog').scrollTop = 0;
     const current = () => !controller.signal.aborted && activeAsset === asset && catalog.config.folderUrl === input.folderUrl && catalog.config.provider === input.provider && (!isOpenList() || memberSession()?.token === session?.token);
     async function loadPart(part, resolveUrl, kind, limit, onProgress) {
@@ -993,7 +1267,6 @@
       const result = await window.StudioPreviewCache.load(previewKey(input, session, asset, part), resolveUrl, { signal: controller.signal, kind, limit, onProgress });
       if (!current()) return null;
       const url = URL.createObjectURL(result.blob); previewObjectUrls.push(url);
-      $('#detail-note').textContent = result.cached ? '本机缓存' : result.persistent ? '预览已缓存到本机' : '预览仅缓存于本次页面';
       return url;
     }
     const imageSource = () => asset.provider === 'openlist' && asset.type === 'image' ? window.OpenListClient.resolve(input, asset, controller.signal) : safeUrl(asset.detailPreviewUrl || asset.previewUrl);
@@ -1008,28 +1281,29 @@
           if (poster) { const image = element('img'); image.src = poster; image.alt = `${asset.name} 缩略图`; stage.append(image); }
         } catch (error) { if (controller.signal.aborted) return; }
         if (!current()) return;
-        if (!stage.children.length) stage.append(fallback('video', '暂无缩略图'));
+        if (!stage.children.length) stage.append(fallback('video'));
         const extension = asset.name.split('.').pop().toLowerCase();
         // MOV / ProRes 和 MKV 的浏览器兼容性不足，不为试播下载整份大原件。
         const nativeVideo = ['mp4', 'webm', 'm4v'].includes(extension) && (asset.provider === 'openlist' || !asset.cloud) && (!asset.sizeMB || asset.sizeMB <= 512);
         if (nativeVideo) {
           const play = element('button', 'button primary preview-play');
-          play.append(icon('play'), document.createTextNode('播放原画质'));
-          play.title = '首次播放先缓存原视频，完成后播放；关闭预览可停止加载。';
+          play.append(icon('play'), document.createTextNode('播放'));
           stage.append(play);
           play.addEventListener('click', async () => {
-            play.disabled = true; play.textContent = '正在缓存原视频…';
+            play.disabled = true; play.textContent = '加载中';
             try {
               const url = await loadPart('video', originalSource, 'video', 512 * 1048576, (bytes, total) => {
-                if (current()) play.textContent = total ? `正在缓存原视频 ${Math.floor(bytes / total * 100)}%` : `正在缓存原视频 ${(bytes / 1048576).toFixed(1)} MB`;
+                if (current()) play.textContent = total ? `加载中 ${Math.floor(bytes / total * 100)}%` : `加载中 ${(bytes / 1048576).toFixed(1)} MB`;
               });
               if (!current() || !url) return;
               const video = element('video'); video.src = url; video.controls = true; video.preload = 'none'; video.setAttribute('playsinline', '');
-              video.addEventListener('error', () => { if (current()) preview.replaceChildren(fallback('video', '浏览器不支持此编码 · 可下载原文件')); }, { once: true });
+              video.addEventListener('error', () => { if (current()) preview.replaceChildren(fallback('video', '网页无法播放，请下载')); }, { once: true });
               stage.replaceChildren(video); video.play().catch(() => {});
-            } catch (error) { if (current()) { play.disabled = false; play.textContent = '重试原画质预览'; toast(error.message); } }
+            } catch (error) { if (current()) { play.disabled = false; play.replaceChildren(icon('play'), document.createTextNode('重试')); toast(error.message); } }
           });
-        } else stage.append(element('span', 'preview-caption', ['mov', 'mkv'].includes(extension) ? '此格式需下载后播放' : asset.sizeMB > 512 ? '超过本机预览上限 · 可下载原文件' : '仅显示缩略图 · 可下载原文件'));
+        } else stage.append(element('span', 'preview-caption', asset.sizeMB > 512 ? '文件较大，下载后播放' : '下载后播放'));
+      } else if (asset.type === 'other') {
+        preview.replaceChildren(fallback('other')); // 非图片、视频、音频不读取原件，直接下载。
       } else {
         const audio = asset.type === 'audio';
         const url = await loadPart(audio ? 'audio' : 'image', audio ? originalSource : imageSource, audio ? 'audio' : 'image', 20 * 1048576);
@@ -1049,7 +1323,7 @@
     const index = filteredAssets.findIndex(asset => asset.id === activeAsset?.id);
     if (index < 0) return;
     const next = filteredAssets[index+direction];
-    if (next) openDetail(next);
+    if (next) openDetail(next, direction);
   }
   $('#detail-previous').addEventListener('click', () => adjacentAsset(-1));
   $('#detail-next').addEventListener('click', () => adjacentAsset(1));
@@ -1113,16 +1387,12 @@
     $('#search-input').focus({ preventScroll:true });
   });
   $('#sort-select').addEventListener('change', render);
-  $('#folder-filter').addEventListener('change', render);
-  $('#folder-browser').addEventListener('toggle', positionFolderBrowser);
-  window.addEventListener('resize', positionFolderBrowser);
-  window.addEventListener('scroll', () => { if ($('#folder-browser').matches(':popover-open')) $('#folder-browser').hidePopover(); }, { passive: true });
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
     activeView = button.dataset.view;
     try { localStorage.setItem(VIEW_KEY, activeView); } catch { /* view stays usable */ }
     render();
   }));
-  $('#reset-filters').addEventListener('click', () => { $('#search-input').value = ''; $('#folder-filter').value = '*'; setType('all'); });
+  $('#reset-filters').addEventListener('click', () => { $('#search-input').value = ''; render(); });
   $('#upload-button').addEventListener('click', openUpload);
   $('#detail-favorite').addEventListener('click', () => toggleFavorite(activeAsset));
   document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => {
@@ -1209,7 +1479,6 @@
 
   window.StudioMotion.bindDialogs();
   decorateChrome();
-  $('#organize-button').addEventListener('click', () => window.StudioMotion.open($('#organize-dialog')));
   $('#tools-menu').addEventListener('click', event => {
     if (event.target.closest('button') && $('#tools-menu').matches(':popover-open')) $('#tools-menu').hidePopover();
   });
