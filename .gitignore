@@ -2,8 +2,10 @@
 /*
 !/.gitignore
 !/.nojekyll
+!/.gitattributes
 !/AGENTS.md
 !/README.md
+!/LICENSE
 !/CLAUDE.md
 !/index.html
 !/styles.css
@@ -65,6 +67,8 @@
 
 !/dock.css
 !/island.css
+!/presence.js
+!/delight.js
 
 !/管理成员账号.cmd
 !/scripts/manage-members.ps1

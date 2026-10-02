@@ -1,0 +1,2 @@
+# cmd 批处理必须是 CRLF：只有 LF 时 chcp 65001 之后会吞掉下一行的首字母。
+*.cmd text eol=crlf

@@ -14,6 +14,7 @@ function Invoke-StudioApi([string]$Route, [string]$Method = 'GET', $Body = $null
         $script:testRequests += $Body.Clone()
         $record = $script:testMembers | Where-Object id -eq $Body.id
         $record.username = $Body.username
+        if ($Body.ContainsKey('permission')) { $record.permission = $Body.permission }
         return $null
     }
     if ($Route -eq '/api/admin/user/get?id=11') { return $script:testMembers[0] }
@@ -43,6 +44,15 @@ try {
     Assert-Studio (-not $script:testRequests[1].ContainsKey('password')) 'Blank password reset existing password'
     $backup = Read-StudioCredentials
     Assert-Studio ($backup.members[0].password -eq 'fake-new-pass' -and $backup.members[0].username -eq 'renamed-again') 'Second update failed to persist encrypted backup'
-    Write-Host '通过：重复用户名、非法输入、并发过期保护、最小修改字段、改名及改密、保留原密码、加密备份回读。'
+    # 只看：去掉写权限位；再改回可整理。没有切换时不发送权限。
+    $again = [PSCustomObject]@{ id=11; username='renamed-again' }
+    $viewer = Submit-StudioMemberChange $credentials $again 'renamed-again' '' 'test-admin-session' $true
+    Assert-Studio ($script:testRequests[2].permission -eq 0 -and $viewer.permission -eq 0) 'Read-only did not clear write permission'
+    Assert-Studio (Test-StudioReadOnly $viewer) 'Read-only member not detected'
+    $editor = Submit-StudioMemberChange $credentials $again 'renamed-again' '' 'test-admin-session' $false
+    Assert-Studio ($script:testRequests[3].permission -eq 248 -and -not (Test-StudioReadOnly $editor)) 'Editable permission not restored'
+    Submit-StudioMemberChange $credentials $again 'renamed-again' '' 'test-admin-session' $false | Out-Null
+    Assert-Studio (-not $script:testRequests[4].ContainsKey('permission')) 'Unchanged permission was resent'
+    Write-Host '通过：重复用户名、非法输入、并发过期保护、最小修改字段、改名及改密、保留原密码、加密备份回读、只看与可整理切换。'
 } finally { if (Test-Path -LiteralPath $taskTestFile) { Remove-Item -LiteralPath $taskTestFile } }
 

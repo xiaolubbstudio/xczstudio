@@ -1,3 +1,4 @@
+/*! 正经素材库 © 2026 小橙子工作室（XXCHENGZI）保留所有权利。未经书面许可，禁止复制、修改、传播或用于其他项目。详见 LICENSE。 */
 // 目录公开读取；上传必须使用当前成员的 OAuth 会话，由 pCloud 校验文件夹权限。
 (function (root) {
   'use strict';

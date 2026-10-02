@@ -2,6 +2,8 @@
 // /api 转发到线上后台，成员可以用真实账号在本机先看改动；只监听本机地址。
 // 后台域名在国内需要代理：启动前设置 NODE_USE_ENV_PROXY=1 和 HTTPS_PROXY=http://127.0.0.1:7897。
 const http = require('node:http');
+const net = require('node:net');
+const tls = require('node:tls');
 const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
@@ -41,7 +43,7 @@ http.createServer((request, response) => {
   if (!['GET', 'HEAD'].includes(request.method)) { response.writeHead(405); response.end(); return; }
   // /?demo 用演示素材看页面，不连后台。
   if (relative === '__demo.js') { fs.readFile(path.join(__dirname, 'preview-demo.js'), (error, text) => { response.writeHead(error ? 404 : 200, { 'Content-Type': mime['.js'], 'Cache-Control': 'no-cache' }); response.end(error ? '' : text); }); return; }
-  const allowed = ['index.html', 'auth.html', 'styles.css', 'workspace.css', 'brand.css', 'dark.css', 'rail.css', 'dock.css', 'motion.css', 'island.css', 'motion.js', 'app.js', 'preview-cache.js', 'pcloud-auth.js', 'auth-callback.js', 'pcloud-client.js', 'google-drive-client.js', 'google-drive-auth.js', 'openlist-client.js', 'openlist-auth.js', 'upload-drop.js', 'fluent.css', 'data/catalog.js', '.nojekyll'].includes(relative) || relative.startsWith('assets/');
+  const allowed = ['index.html', 'auth.html', 'styles.css', 'workspace.css', 'brand.css', 'dark.css', 'rail.css', 'dock.css', 'motion.css', 'island.css', 'motion.js', 'presence.js', 'app.js', 'delight.js', 'preview-cache.js', 'pcloud-auth.js', 'auth-callback.js', 'pcloud-client.js', 'google-drive-client.js', 'google-drive-auth.js', 'openlist-client.js', 'openlist-auth.js', 'upload-drop.js', 'fluent.css', 'data/catalog.js', '.nojekyll'].includes(relative) || relative.startsWith('assets/');
   const target = path.resolve(root, relative);
   if (!allowed || !target.startsWith(root + path.sep) || relative.includes('..') || relative.includes('\\')) { response.writeHead(404); response.end('Not found'); return; }
   if (relative === 'index.html' && new URL(request.url, 'http://localhost').searchParams.has('demo')) {
@@ -82,4 +84,33 @@ http.createServer((request, response) => {
     if (request.method === 'HEAD') response.end();
     else fs.createReadStream(target, { start, end }).on('error', () => response.destroy()).pipe(response);
   });
-}).listen(port, host, () => console.log(`小橙子资源库：http://${host}:${port}`));
+}).on('upgrade', proxyPresence).listen(port, host, () => console.log(`小橙子资源库：http://${host}:${port}`));
+
+// 成员在线的 WebSocket 也转到线上后台：有 HTTPS_PROXY 时先经代理 CONNECT，再走 TLS。
+// 只转发握手需要的头（子协议里带着成员令牌），不带浏览器来源。
+function proxyPresence(request, socket) {
+  if (new URL(request.url, 'http://localhost').pathname !== '/api/studio_presence') { socket.destroy(); return; }
+  const target = new URL(API_ORIGIN);
+  const proxy = process.env.HTTPS_PROXY ? new URL(process.env.HTTPS_PROXY) : null;
+  socket.on('error', () => {});
+  const start = upstream => {
+    upstream.on('error', () => socket.destroy());
+    socket.on('close', () => upstream.destroy());
+    const headers = { Host: target.hostname, Upgrade: 'websocket', Connection: 'Upgrade' };
+    for (const name of ['sec-websocket-key', 'sec-websocket-version', 'sec-websocket-protocol']) if (request.headers[name]) headers[name] = request.headers[name];
+    upstream.write(`GET /api/studio_presence HTTP/1.1\r\n${Object.entries(headers).map(([key, value]) => `${key}: ${value}`).join('\r\n')}\r\n\r\n`);
+    upstream.pipe(socket); socket.pipe(upstream);
+  };
+  if (!proxy) { start(tls.connect({ host: target.hostname, port: 443, servername: target.hostname })); return; }
+  const tunnel = net.connect(Number(proxy.port || 80), proxy.hostname, () => tunnel.write(`CONNECT ${target.hostname}:443 HTTP/1.1\r\nHost: ${target.hostname}:443\r\n\r\n`));
+  let reply = '';
+  const onData = chunk => {
+    reply += chunk.toString('latin1');
+    if (!reply.includes('\r\n\r\n')) return;
+    tunnel.off('data', onData);
+    if (!/^HTTP\/1\.[01] 200/.test(reply)) { tunnel.destroy(); socket.destroy(); return; }
+    start(tls.connect({ socket: tunnel, servername: target.hostname }));
+  };
+  tunnel.on('data', onData);
+  tunnel.on('error', () => socket.destroy());
+}

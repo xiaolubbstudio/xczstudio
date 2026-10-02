@@ -43,7 +43,12 @@ function Get-StudioMembers([string]$Token) {
     $data = Invoke-StudioApi '/api/admin/user/list' 'GET' $null $Token
     return @($data.content | Where-Object { $_.role -eq 0 } | Sort-Object id)
 }
-function Submit-StudioMemberChange($Credentials, $Member, [string]$Username, [string]$Password, [string]$Token) {
+# 只看：去掉离线下载、上传/新建、改名、移动、复制、删除、WebDAV/FTP 管理、解压、分享这些会改动内容的权限位。
+$script:StudioWriteBits = 4 + 8 + 16 + 32 + 64 + 128 + 512 + 2048 + 8192 + 16384 + 32768
+# 可整理：上传/新建、改名、移动、复制、删除。
+$script:StudioEditBits = 8 + 16 + 32 + 64 + 128
+function Test-StudioReadOnly($Member) { return (([int]$Member.permission) -band 8) -eq 0 }
+function Submit-StudioMemberChange($Credentials, $Member, [string]$Username, [string]$Password, [string]$Token, $ReadOnly = $null) {
     $Username = $Username.Trim()
     if (-not $Username -or $Username.Length -gt 64 -or $Username -match '\s|[\x00-\x1F\x7F]') { throw '用户名须为 1–64 个字符，不包含空格或控制字符。' }
     if ($Password -and ($Password.Length -lt 8 -or $Password.Length -gt 128 -or $Password -ne $Password.Trim())) { throw '密码须为 8–128 个字符，开头和结尾不能是空格。' }
@@ -51,12 +56,17 @@ function Submit-StudioMemberChange($Credentials, $Member, [string]$Username, [st
     $current = $fresh | Where-Object { $_.id -eq $Member.id } | Select-Object -First 1
     if (-not $current -or $current.username -ne $Member.username) { throw '成员已被其他管理员修改，请刷新列表后重试。' }
     if (@($fresh | Where-Object { $_.id -ne $Member.id -and $_.username -eq $Username }).Count) { throw '用户名已被其他成员使用。' }
-    # Do not send roles, permission bits, base paths, administrator credentials, or disabled flags.
+    # Do not send roles, base paths, administrator credentials, or disabled flags; permission bits only when switching 可整理/只看.
     $body = @{ id = $Member.id; username = $Username }
+    $expectedPermission = [int]$current.permission
+    if ($null -ne $ReadOnly) {
+        $expectedPermission = if ($ReadOnly) { $expectedPermission -band (-bnot $script:StudioWriteBits) } else { $expectedPermission -bor $script:StudioEditBits }
+        if ($expectedPermission -ne [int]$current.permission) { $body.permission = $expectedPermission }
+    }
     if ($Password) { $body.password = $Password }
     Invoke-StudioApi '/api/admin/user/update' 'POST' $body $Token | Out-Null
     $confirmed = Invoke-StudioApi ('/api/admin/user/get?id=' + $Member.id) 'GET' $null $Token
-    if ($confirmed.username -ne $Username -or $confirmed.role -ne $current.role -or $confirmed.permission -ne $current.permission -or $confirmed.base_path -ne $current.base_path -or $confirmed.disabled -ne $current.disabled) { throw '后台已接收修改，但回读验证未通过。请刷新列表或在后台核对，不要重复提交。' }
+    if ($confirmed.username -ne $Username -or $confirmed.role -ne $current.role -or $confirmed.permission -ne $expectedPermission -or $confirmed.base_path -ne $current.base_path -or $confirmed.disabled -ne $current.disabled) { throw '后台已接收修改，但回读验证未通过。请刷新列表或在后台核对，不要重复提交。' }
     $record = @($Credentials.members | Where-Object { ($_.PSObject.Properties['id'] -and $_.id -eq $Member.id) -or $_.username -eq $Member.username }) | Select-Object -First 1
     if ($record) {
         $record.username = $Username
@@ -88,7 +98,8 @@ function Start-StudioMemberManager {
             $members = Get-StudioMembers $token
             for ($i = 0; $i -lt $members.Count; $i++) {
                 $status = if ($members[$i].disabled) { '已停用' } else { '正常' }
-                Write-Host ('  {0}. {1}  [{2}]' -f ($i + 1), $members[$i].username, $status)
+                $mode = if (Test-StudioReadOnly $members[$i]) { '只看' } else { '可整理' }
+                Write-Host ('  {0}. {1}  [{2} · {3}]' -f ($i + 1), $members[$i].username, $status, $mode)
             }
             Write-Host '  R. 刷新列表   Q. 退出'
             $choice = Read-Host '选择要修改的成员编号'
@@ -105,13 +116,20 @@ function Start-StudioMemberManager {
                 $repeat = Read-Host '再次输入新密码' -AsSecureString
                 if ($newPassword -cne (Convert-StudioSecretToText $repeat)) { Write-Host '两次密码不一致，本次未提交。' -ForegroundColor Yellow; $newPassword = ''; continue }
             }
-            if ($newUsername.Trim() -eq $member.username -and -not $newPassword) { Write-Host '没有修改。'; continue }
+            $currentMode = if (Test-StudioReadOnly $member) { '只看' } else { '可整理' }
+            $modeChoice = Read-Host ('权限（回车保留 {0}）：1 = 可整理（上传、整理、删除）；2 = 只看（只能浏览和预览，不能做任何修改）' -f $currentMode)
+            $readOnly = $null
+            if ($modeChoice -eq '1') { $readOnly = $false } elseif ($modeChoice -eq '2') { $readOnly = $true } elseif ($modeChoice.Trim()) { Write-Host '请输入 1、2 或直接回车。'; $newPassword = ''; continue }
+            $modeChanged = $null -ne $readOnly -and $readOnly -ne (Test-StudioReadOnly $member)
+            if ($newUsername.Trim() -eq $member.username -and -not $newPassword -and -not $modeChanged) { Write-Host '没有修改。'; continue }
             $passwordStatus = if ($newPassword) { '更新' } else { '保持不变' }
-            Write-Host ('提交：{0} → {1}；密码：{2}。' -f $member.username, $newUsername.Trim(), $passwordStatus)
+            $modeStatus = if ($modeChanged) { if ($readOnly) { '改为只看' } else { '改为可整理' } } else { '保持' + $currentMode }
+            Write-Host ('提交：{0} → {1}；密码：{2}；权限：{3}。' -f $member.username, $newUsername.Trim(), $passwordStatus, $modeStatus)
             if ((Read-Host '输入 Y 提交到网站后台；其他输入取消') -ne 'Y') { $newPassword = ''; continue }
             try {
-                $updated = Submit-StudioMemberChange $credentials $member $newUsername $newPassword $token
+                $updated = Submit-StudioMemberChange $credentials $member $newUsername $newPassword $token $readOnly
                 Write-Host ('已生效：' + $updated.username + '。请用新账号信息登录网站。') -ForegroundColor Green
+                if ($modeChanged) { Write-Host '权限立刻生效：已经登录的设备下一次操作就按新权限处理。' }
                 if ($newPassword) { Write-Host '新的登录使用新密码；已有登录状态不会被本程序强制退出，请成员退出后重新登录。' }
             } catch { Write-Host $_.Exception.Message -ForegroundColor Red }
             finally { $newPassword = ''; $secret = $null; $repeat = $null }

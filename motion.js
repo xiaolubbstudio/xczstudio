@@ -1,3 +1,4 @@
+/*! 正经素材库 © 2026 小橙子工作室（XXCHENGZI）保留所有权利。未经书面许可，禁止复制、修改、传播或用于其他项目。详见 LICENSE。 */
 (() => {
   'use strict';
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
@@ -148,5 +149,24 @@
       if (!prevented) close(dialog);
     }));
   }
-  window.StudioMotion = { open, close, grid, toast, bindDialogs, indicator, swap, pop, reveal, conceal, ease: EASE };
+  // 网格里显示或隐藏一部分卡片：要藏的先快速收起，其余卡片用弹簧滑到新位置，新出现的依次弹出。
+  function reflow(node, mutate, leaving = []) {
+    const visible = child => child.getClientRects().length > 0;
+    const run = () => {
+      const before = new Map([...node.children].filter(visible).map(child => [child, child.getBoundingClientRect()]));
+      mutate();
+      let entered = 0;
+      for (const child of node.children) {
+        if (!visible(child)) continue;
+        const next = child.getBoundingClientRect(), old = before.get(child);
+        if (next.top > innerHeight || next.bottom < 0) continue;
+        if (!old) animate(child, [{ opacity: 0, transform: 'translateY(-10px) scale(.94)' }, { opacity: 1, offset: .35 }, { opacity: 1, transform: 'none' }], 560, Math.min(entered++ * 30, 240), EASE.bounce);
+        else if (Math.abs(old.left - next.left) > 1 || Math.abs(old.top - next.top) > 1) animate(child, [{ transform: `translate(${old.left - next.left}px,${old.top - next.top}px)` }, { transform: 'none' }], 560, 0, EASE.snappy);
+      }
+    };
+    const exits = leaving.filter(visible).map(child => animate(child, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-6px) scale(.96)' }], 150, 0, EASE.exit, { fill: 'forwards' })).filter(Boolean);
+    if (!exits.length) { run(); return; }
+    Promise.all(exits.map(item => item.finished.catch(() => {}))).then(() => { run(); exits.forEach(item => item.cancel()); });
+  }
+  window.StudioMotion = { open, close, grid, reflow, toast, bindDialogs, indicator, swap, pop, reveal, conceal, ease: EASE };
 })();

@@ -1,3 +1,4 @@
+/*! 正经素材库 © 2026 小橙子工作室（XXCHENGZI）保留所有权利。未经书面许可，禁止复制、修改、传播或用于其他项目。详见 LICENSE。 */
 // pCloud 官方 OAuth 登录。令牌仅保留在当前标签页会话，不写入本地目录或仓库。
 (function (root) {
   'use strict';

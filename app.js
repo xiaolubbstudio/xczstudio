@@ -1,3 +1,4 @@
+/*! 正经素材库 © 2026 小橙子工作室（XXCHENGZI）保留所有权利。未经书面许可，禁止复制、修改、传播或用于其他项目。详见 LICENSE。 */
 (() => {
   'use strict';
 
@@ -103,6 +104,7 @@
   let selecting = false;
   const selection = new Set();
   let dragIds = null;
+  let foldersOpen = false; // 文件夹默认折叠，点开后在这次浏览里保持打开。
   const VIEWS = ['all', 'image', 'video', 'audio', 'favorites', 'trash'];
   const folderOf = asset => asset.tags.join('/');
   const parentOf = path => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
@@ -513,16 +515,24 @@
     folderCache.virtualBase = uploadFolder() ? uploadFolder().split('/') : [];
     let completed = 0;
     renderQueue();
+    const total = uploadQueue.filter(item => !item.done).length;
+    let index = 0, reported = 0;
     for (const item of uploadQueue) {
       if (item.done || uploadRequest.signal.aborted) continue;
       try {
         item.status = '正在上传…'; renderQueue();
-        await client.upload(settings, item.file, (percent) => { item.status = `${percent}% · 正在上传`; renderQueue(); }, uploadRequest.signal, session, item.relativePath, folderCache);
+        index++; reported = Date.now();
+        presence({ action: 'upload', detail: `${index}/${total}`, folder: uploadFolder() });
+        await client.upload(settings, item.file, (percent) => {
+          item.status = `${percent}% · 正在上传`; renderQueue();
+          if (Date.now() - reported > 30000) { reported = Date.now(); presence({ detail: `${index}/${total} ${percent}%` }); }
+        }, uploadRequest.signal, session, item.relativePath, folderCache);
         item.done = true; item.status = '上传成功'; completed++;
       } catch (error) { item.status = error.message; if ([1000, 2000, 401].includes(error.code)) auth.logout(); }
       renderQueue();
     }
     const canceled = uploadRequest.signal.aborted;
+    presence({ action: '', detail: '' });
     uploading = false;
     uploadRequest = null;
     renderQueue();
@@ -543,7 +553,7 @@
     if (dragIds || !window.StudioUploadDrop.hasFiles(event.dataTransfer)) return; // 在网页里拖卡片整理，不是上传。
     event.preventDefault(); dragDepth++;
     dropOverlay.hidden = false; document.body.classList.add('is-file-dragging');
-    $('#drop-label').textContent = uploading ? '正在上传，请稍后添加' : !memberSession() || !member?.canUpload ? '请先登录，再拖入上传' : '松开上传';
+    $('#drop-label').textContent = viewOnly() ? '只看账号不能上传' : uploading ? '正在上传，请稍后添加' : !memberSession() || !member?.canUpload ? '请先登录，再拖入上传' : '松开上传';
   }, true);
   window.addEventListener('dragover', event => {
     if (dragIds || (!window.StudioUploadDrop.hasFiles(event.dataTransfer) && !dragDepth)) return;
@@ -558,6 +568,7 @@
   window.addEventListener('drop', async event => {
     if (dragIds || (!window.StudioUploadDrop.hasFiles(event.dataTransfer) && !dragDepth)) return;
     event.preventDefault(); event.stopPropagation(); hideDrop();
+    if (viewOnly()) { toast('只看账号不能上传。'); return; }
     if (uploading || readingDrop) { toast('请等待当前上传完成，再添加文件。'); return; }
     if (!memberSession() || !member?.canUpload || memberBusy) {
       if (!memberSession()) member = null;
@@ -784,30 +795,168 @@
     $('#selection-move').disabled = $('#selection-trash').disabled = !selection.size;
   }
 
-  // 桌面上可把卡片拖进文件夹卡片或路径里的上一级；拖选中的卡片会带上全部已选。
-  function endDrag() {
-    dragIds = null;
-    document.body.classList.remove('is-moving-assets');
-    document.querySelectorAll('.is-drop-target').forEach(node => node.classList.remove('is-drop-target'));
-  }
+  // 拖动整理：电脑按住直接拖，手机和平板长按后拖。卡片浮起跟着走：放到文件夹或路径上的上一级就是移动；
+  // 在“全部素材”里放到同组卡片之间就是排序，排好的顺序所有成员都一样。手机长按后不动就松手，弹出操作菜单。
+  let press = null, drag = null, renderLater = false, suppressClick = 0;
   function draggable(card, asset) {
-    if (!canSelect(asset) || !matchMedia('(hover:hover) and (pointer:fine)').matches) return;
-    card.draggable = true;
-    card.addEventListener('dragstart', event => {
-      dragIds = selection.has(asset.id) ? [...selection] : [asset.id];
-      event.dataTransfer.clearData();
-      event.dataTransfer.setData('application/x-studio-assets', dragIds.join('\n'));
-      event.dataTransfer.effectAllowed = 'move';
-      document.body.classList.add('is-moving-assets');
+    if (!canSelect(asset)) return;
+    card.addEventListener('pointerdown', event => {
+      if (press || drag || event.button !== 0 || !event.isPrimary || event.target.closest('.card-actions,.card-meta,a')) return;
+      press = { card, asset, pointer: event.pointerId, type: event.pointerType, x: event.clientX, y: event.clientY, timer: 0 };
+      if (event.pointerType !== 'mouse') press.timer = setTimeout(() => liftCard(press.x, press.y), 320);
     });
-    card.addEventListener('dragend', endDrag);
   }
-  function dropTarget(node, folder) {
-    if (!canManage()) return;
-    node.addEventListener('dragover', event => { if (!dragIds) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; node.classList.add('is-drop-target'); });
-    node.addEventListener('dragleave', event => { if (!node.contains(event.relatedTarget)) node.classList.remove('is-drop-target'); });
-    node.addEventListener('drop', event => { if (!dragIds) return; event.preventDefault(); const ids = dragIds; endDrag(); moveAssets(ids, folder); });
+  function dropTarget(node, folder) { if (canManage()) node.dataset.dropFolder = folder; }
+  function cancelPress() { if (press) clearTimeout(press.timer); press = null; }
+  const canReorder = d => d.ids.length === 1 && activeType === 'all' && !$('#search-input').value.trim();
+  function liftCard(x, y) {
+    const { card, asset, pointer, type } = press; cancelPress();
+    if (!card.isConnected) return;
+    if (manageBusy || uploading) { toast('请先等待当前操作完成。'); return; }
+    const ids = selection.has(asset.id) ? [...selection] : [asset.id];
+    const tile = card.querySelector('.preview-button'), rect = tile.getBoundingClientRect();
+    // 浮起的是缩略图的一份拷贝，原卡片留在原位变淡，标出放回去的位置。
+    const ghost = element('div', 'asset-grid drag-ghost'); ghost.setAttribute('aria-hidden', 'true');
+    const copy = tile.cloneNode(true); copy.removeAttribute('aria-label'); copy.tabIndex = -1;
+    ghost.append(copy);
+    if (ids.length > 1) { ghost.classList.add('is-stack'); ghost.append(element('b', 'drag-count', String(ids.length))); }
+    const ox = x - rect.left, oy = y - rect.top;
+    ghost.style.width = `${rect.width}px`;
+    ghost.style.translate = `${rect.left}px ${rect.top}px`;
+    ghost.style.transformOrigin = `${ox}px ${oy}px`;
+    document.body.append(ghost);
+    drag = { card, asset, ids, pointer, type, ghost, x, y, startX: x, startY: y, gx: rect.left, gy: rect.top, ox, oy, target: null, home: [...card.parentNode.children].indexOf(card), shifted: 0, kind: kindOf(asset) };
+    dragIds = ids;
+    card.classList.add('is-lifted');
+    document.body.classList.add('is-moving-assets');
+    getSelection()?.removeAllRanges();
+    navigator.vibrate?.(10);
+    presence({ action: 'move', detail: '' });
+    // 先轻轻弹起，再缩到不挡住目标的大小。
+    requestAnimationFrame(() => { ghost.style.setProperty('--s', String(Math.min(1, 168 / rect.width))); ghost.classList.add('is-up'); });
+    drag.frame = requestAnimationFrame(followDrag);
   }
+  function followDrag() {
+    const d = drag; if (!d) return;
+    // 拖到屏幕上下边缘时自动滚动。
+    const top = 90, bottom = innerHeight - 90;
+    const speed = d.y < top ? -(top - d.y) / 5 : d.y > bottom ? (d.y - bottom) / 5 : 0;
+    if (speed) scrollBy(0, Math.max(-20, Math.min(20, speed)));
+    d.gx += (d.x - d.ox - d.gx) * .42; d.gy += (d.y - d.oy - d.gy) * .42;
+    d.ghost.style.translate = `${d.gx}px ${d.gy}px`;
+    hitTest(d);
+    d.frame = requestAnimationFrame(followDrag);
+  }
+  function hitTest(d) {
+    const under = document.elementFromPoint(d.x, d.y);
+    if (under?.closest('.folder-toggle')) setFoldersOpen(true);
+    const target = under?.closest('[data-drop-folder]') || null;
+    if (target !== d.target) {
+      d.target?.classList.remove('is-drop-target');
+      d.target = target;
+      target?.classList.add('is-drop-target');
+      d.ghost.classList.toggle('is-over-folder', Boolean(target));
+      if (target) navigator.vibrate?.(6);
+    }
+    if (!target) reorderAt(d);
+  }
+  // 按卡片的布局位置判断指在哪张上（不受滑动动画影响），同组之间才换位。
+  function reorderAt(d) {
+    if (!canReorder(d) || performance.now() - d.shifted < 90) return;
+    const grid = d.card.parentNode, base = d.card.offsetParent?.getBoundingClientRect();
+    if (!base) return;
+    const px = d.x - base.left, py = d.y - base.top;
+    const over = [...grid.children].find(card => card !== d.card && card.matches('.asset-card:not(.folder-card)') && px >= card.offsetLeft && px < card.offsetLeft + card.offsetWidth && py >= card.offsetTop && py < card.offsetTop + card.offsetHeight);
+    const asset = over && cloudAssets.find(item => item.id === over.dataset.id);
+    if (!asset || kindOf(asset) !== d.kind || asset.pending) return;
+    const after = grid.classList.contains('list-view') ? py > over.offsetTop + over.offsetHeight / 2 : px > over.offsetLeft + over.offsetWidth / 2;
+    const next = after ? over.nextSibling : over;
+    if (next === d.card || next === d.card.nextSibling) return;
+    d.shifted = performance.now();
+    window.StudioMotion.reflow(grid, () => grid.insertBefore(d.card, next));
+  }
+  function dropCard(cancel = false) {
+    const d = drag; if (!d) return;
+    drag = null; dragIds = null; cancelAnimationFrame(d.frame);
+    presence({ action: '', detail: '' });
+    suppressClick = Date.now() + 400;
+    document.body.classList.remove('is-moving-assets');
+    d.target?.classList.remove('is-drop-target');
+    const ghost = d.ghost;
+    const finish = () => { ghost.remove(); d.card.classList.remove('is-lifted'); if (renderLater || cancel) render(); };
+    const fly = (x, y, scale, done) => {
+      ghost.classList.add('is-landing');
+      ghost.style.translate = `${x}px ${y}px`; ghost.style.setProperty('--s', String(scale));
+      setTimeout(done, 420);
+    };
+    if (!cancel && d.target) {
+      // 放进文件夹：浮起的卡片缩进目标里，文件夹轻轻一弹。
+      const folder = d.target.dataset.dropFolder, rect = d.target.getBoundingClientRect();
+      ghost.classList.add('is-into');
+      fly(rect.left + rect.width / 2 - d.ox, rect.top + rect.height / 2 - d.oy, .1, () => ghost.remove());
+      d.card.classList.remove('is-lifted');
+      moveAssets(d.ids, folder);
+      if (renderLater) render();
+      setTimeout(() => {
+        const landed = document.querySelector(`.asset-card[data-id="${CSS.escape('folder:' + folder)}"] .icon`) || (d.target.isConnected ? d.target : null);
+        window.StudioMotion.pop(landed);
+      }, 260);
+      return;
+    }
+    // 手机长按后没有拖动：当作“更多操作”。
+    if (!cancel && d.type !== 'mouse' && Math.hypot(d.x - d.startX, d.y - d.startY) < 12) {
+      const menu = d.card.querySelector('.asset-menu-button');
+      if (menu) setTimeout(() => showAssetActions(menu, d.asset, d.card), 60);
+    }
+    const moved = !cancel && [...d.card.parentNode.children].indexOf(d.card) !== d.home;
+    const slot = d.card.querySelector('.preview-button').getBoundingClientRect();
+    fly(slot.left, slot.top, 1, finish);
+    if (moved) saveOrder(d);
+  }
+  addEventListener('pointermove', event => {
+    if (press && event.pointerId === press.pointer) {
+      const far = Math.hypot(event.clientX - press.x, event.clientY - press.y) > (press.type === 'mouse' ? 6 : 10);
+      if (far && press.type === 'mouse') liftCard(event.clientX, event.clientY);
+      else if (far) cancelPress(); // 长按前手指已经移动：这是在滑动页面。
+    }
+    if (drag && event.pointerId === drag.pointer) { event.preventDefault(); drag.x = event.clientX; drag.y = event.clientY; }
+  }, { passive: false });
+  addEventListener('pointerup', event => {
+    if (press?.pointer === event.pointerId) cancelPress();
+    if (drag?.pointer === event.pointerId) { drag.x = event.clientX; drag.y = event.clientY; hitTest(drag); dropCard(); } // 拖得很快时，松手这一刻再认一次目标。
+  });
+  addEventListener('pointercancel', event => { if (press?.pointer === event.pointerId) cancelPress(); if (drag?.pointer === event.pointerId) dropCard(true); });
+  addEventListener('blur', () => { cancelPress(); dropCard(true); });
+  document.addEventListener('touchmove', event => { if (drag) event.preventDefault(); }, { passive: false });
+  document.addEventListener('contextmenu', event => { if (drag || (press && press.type !== 'mouse')) event.preventDefault(); }, true);
+  document.addEventListener('click', event => { if (Date.now() < suppressClick && event.target.closest?.('.asset-card')) { event.preventDefault(); event.stopPropagation(); } }, true);
+  // 排序只改网站目录：先在页面上排好，后台没存上再恢复。
+  async function saveOrder(d) {
+    const ids = [...$('#asset-grid').children].map(card => cloudAssets.find(item => item.id === card.dataset.id)).filter(item => item && !item.pending && kindOf(item) === d.kind).map(item => item.id);
+    const before = cloudAssets, position = new Map(ids.map((id, index) => [id, index]));
+    cloudAssets = cloudAssets.map(item => position.has(item.id) ? { ...item, order: position.get(item.id) } : item);
+    if ($('#sort-select').value !== 'custom') { $('#sort-select').value = 'custom'; rememberSort(); toast('已切换为自定义顺序'); }
+    renderLater = true;
+    manageBusy = true;
+    try {
+      await window.OpenListClient.manage(catalog.config, 'order', { folder: currentFolder, ids }, AbortSignal.timeout(20000));
+      organized();
+      cacheAssets();
+    } catch (error) { cloudAssets = before; render(); toast(error.message); }
+    finally { manageBusy = false; }
+  }
+  function cacheAssets() {
+    try {
+      const data = JSON.parse(localStorage.getItem(CATALOG_CACHE) || 'null');
+      const order = new Map(cloudAssets.map(item => [item.id, item.order]));
+      if (data) localStorage.setItem(CATALOG_CACHE, JSON.stringify({ ...data, assets: data.assets.map(item => order.has(item.id) ? { ...item, order: order.get(item.id) } : item) }));
+    } catch { /* 下次打开时以后台为准。 */ }
+  }
+  // 排序方式记在这台浏览器上。
+  const SORT_KEY = 'studio-sort-v1';
+  function rememberSort() { try { localStorage.setItem(SORT_KEY, $('#sort-select').value); } catch { /* 只是下次回到默认排序。 */ } }
+  try { const saved = localStorage.getItem(SORT_KEY); if (saved && $(`#sort-select option[value="${saved}"]`)) $('#sort-select').value = saved; } catch { /* 默认排序 */ }
+
   // 移动只改网站目录：先在页面上挪过去，后台确认失败再挪回来。
   async function moveAssets(ids, folder) {
     const moving = ids.filter(id => { const asset = cloudAssets.find(item => item.id === id); return asset && folderOf(asset) !== folder; });
@@ -821,6 +970,7 @@
     render();
     try {
       await window.OpenListClient.manage(catalog.config, 'move', { ids: moving, folder }, AbortSignal.timeout(30000));
+      organized();
       toast(`已移动 ${moving.length} 项到“${folder ? folder.split('/').at(-1) : TITLES.all}”`);
       manageBusy = false;
       await refreshCloud();
@@ -932,13 +1082,13 @@
     // 操作收在名称右侧：电脑上悬停才出现，手机上只留“···”；已收藏的爱心一直显示。
     const actions = element('div', 'card-actions');
     const live = !asset.deleted && !asset.pending;
-    if (live) {
+    if (live && !viewOnly()) {
       const favorite = element('button', 'favorite-button'); favorite.type = 'button';
       favoriteLabel(favorite, asset);
       favorite.addEventListener('click', () => toggleFavorite(asset));
       actions.append(favorite, downloadLink(asset));
     }
-    if (live || canManage()) {
+    if ((live && !viewOnly()) || canManage()) {
       const more = element('button', 'asset-menu-button'); more.type = 'button';
       more.setAttribute('aria-label', `更多操作 ${asset.name}`); more.title = '更多';
       more.append(moreIcon());
@@ -978,11 +1128,133 @@
   function groupHeading(id, label, count) {
     const heading = element('h3', 'grid-group', label);
     heading.dataset.id = 'group:' + id;
-    heading.append(element('span', '', String(count)));
+    heading.append(element('span', 'group-count', String(count)));
+    // 收成小分栏后，点它回到这一组的开头。
+    heading.addEventListener('click', () => { if (heading.classList.contains('is-stuck')) scrollToGroup(heading); });
     return heading;
   }
+  // 往下滑时各组小标题滑到顶部依次叠成小分栏（CSS sticky）；这里只标出哪些已经收起，
+  // 收起的那条显示阴影和这一组的几张小缩略图。
+  let stuckFrame = 0;
+  function updateStuck() {
+    stuckFrame = 0;
+    for (const node of document.querySelectorAll('.section-heading, #asset-grid > .grid-group')) {
+      const top = parseFloat(getComputedStyle(node).top);
+      const stuck = scrollY > 0 && Number.isFinite(top) && node.getBoundingClientRect().top <= top + .5;
+      if (stuck === node.classList.contains('is-stuck')) continue;
+      node.classList.toggle('is-stuck', stuck);
+      if (stuck && node.matches('.grid-group:not(.folder-toggle)') && !node.querySelector('.group-peek')) {
+        const peek = element('span', 'group-peek'); peek.setAttribute('aria-hidden', 'true');
+        for (let card = node.nextElementSibling; card && !card.classList.contains('grid-group') && peek.children.length < 4; card = card.nextElementSibling) {
+          const source = card.querySelector('.preview-button > img');
+          if (source?.src) { const image = element('img'); image.src = source.src; image.alt = ''; peek.append(image); }
+        }
+        if (peek.children.length) node.append(peek);
+      }
+    }
+  }
+  const watchStuck = () => { if (!stuckFrame) stuckFrame = requestAnimationFrame(updateStuck); };
+  // 面板上沿的小横条：点一下把面板推上去盖住 Logo；已经盖住时再点回到顶上。
+  $('#sheet-grabber').addEventListener('click', () => {
+    const top = $('.library').getBoundingClientRect().top + scrollY;
+    scrollTo({ top: scrollY < top - 1 ? top : 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  });
+  addEventListener('scroll', watchStuck, { passive: true });
+  addEventListener('resize', watchStuck, { passive: true });
+  function scrollToGroup(heading) {
+    let first = heading.nextElementSibling;
+    while (first && !first.getClientRects().length) first = first.nextElementSibling;
+    if (!first || first.classList.contains('grid-group')) return;
+    const top = first.getBoundingClientRect().top + scrollY - (parseFloat(getComputedStyle(heading).top) || 0) - heading.offsetHeight - 16;
+    scrollTo({ top: Math.max(0, top), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  }
+
+  // 文件夹那一组的小标题可以点：收起时只剩“文件夹 N ›”。
+  function folderToggle(count) {
+    const heading = element('h3', 'grid-group folder-toggle');
+    heading.dataset.id = 'group:folders';
+    const button = element('button', '', '文件夹'); button.type = 'button';
+    button.setAttribute('aria-expanded', String(foldersOpen));
+    button.append(element('span', 'group-count', String(count)), icon('caret-right'));
+    // 收成小分栏时，点它展开并回到文件夹；平时点它展开或收起。
+    button.addEventListener('click', () => {
+      if (!heading.classList.contains('is-stuck')) { setFoldersOpen(!foldersOpen); return; }
+      setFoldersOpen(true); scrollToGroup(heading);
+    });
+    heading.append(button);
+    return heading;
+  }
+  function setFoldersOpen(open) {
+    if (foldersOpen === open) return;
+    foldersOpen = open;
+    const grid = $('#asset-grid');
+    grid.querySelector('.folder-toggle button')?.setAttribute('aria-expanded', String(open));
+    if (!grid.querySelector('.folder-toggle')) return;
+    window.StudioMotion.reflow(grid, () => grid.classList.toggle('folders-collapsed', !foldersOpen), open ? [] : [...grid.querySelectorAll('.folder-card')]);
+  }
+
+  // 成员在线：左侧列出在线的人（绿点 + Online + 名字）；正在上传、拖动或整理的显示“操控中”和在哪个文件夹。
+  const ACTION_TEXT = { upload: '上传', move: '拖动', organize: '整理' };
+  const ACTION_TTL = { upload: 120000, move: 60000, organize: 20000 };
+  let presenceTimer = 0, organizeTimer = 0, presenceNames = new Set();
+  function presence(patch) { window.StudioPresence?.update(patch); }
+  // 刚完成一次整理：别人那里亮 20 秒“操控中”，之后自己清掉。
+  function organized() {
+    presence({ action: 'organize', detail: '' });
+    clearTimeout(organizeTimer);
+    organizeTimer = setTimeout(() => presence({ action: '', detail: '' }), ACTION_TTL.organize);
+  }
+  function syncPresence() {
+    const session = isOpenList() ? memberSession() : null;
+    if (!session?.token || !session.endpoint || !window.StudioPresence) { window.StudioPresence?.disconnect(); return; }
+    window.StudioPresence.connect(`${session.endpoint.replace(/^http/, 'ws')}/api/studio_presence`, session.token);
+    presence({ folder: isSpecial() ? '' : currentFolder });
+  }
+  function renderPresence() {
+    clearTimeout(presenceTimer);
+    const members = window.StudioPresence?.members || [], box = $('#presence');
+    box.hidden = !members.length;
+    if (!members.length) { box.classList.remove('is-open'); presenceNames = new Set(); return; }
+    const me = memberSession()?.username, now = Date.now();
+    let soonest = Infinity;
+    // 自己排第一，其他人按上线先后。
+    $('#presence-list').replaceChildren(...[...members].sort((a, b) => (b.name === me) - (a.name === me)).map(member => {
+      const left = ACTION_TEXT[member.action] ? ACTION_TTL[member.action] - (now - member.localAt) : 0;
+      const busy = left > 0, place = member.folder.split('/').at(-1);
+      if (busy) soonest = Math.min(soonest, left);
+      const status = busy ? '操控中' : member.visible ? 'Online' : '离开';
+      const detail = busy ? `${ACTION_TEXT[member.action]}${member.detail ? ' ' + member.detail : ''} · ${place || TITLES.all}` : member.visible && place ? `在「${place}」` : '';
+      const name = member.name === me ? `${member.name}（你）` : member.name;
+      const row = element('li', `presence-row is-${busy ? 'busy' : member.visible ? 'online' : 'away'}`);
+      if (presenceNames.size && !presenceNames.has(member.name)) row.classList.add('is-new'); // 新上线的人滑进来，其他行不重复动画。
+      row.title = [name, member.visible || busy ? status : '页面在后台', detail].filter(Boolean).join(' · ');
+      const avatar = element('span', 'presence-avatar', [...member.name][0]?.toUpperCase() || '?'); avatar.setAttribute('aria-hidden', 'true');
+      const line = element('span', 'presence-line');
+      line.append(element('i', 'presence-dot'), element('span', 'presence-status', status), element('span', 'presence-name', member.name)); // “（你）”只放在悬停提示里，窄栏里不挤掉名字。
+      row.append(avatar, line);
+      if (detail) row.append(element('span', 'presence-detail', detail));
+      return row;
+    }));
+    presenceNames = new Set(members.map(member => member.name));
+    $('#presence-count').textContent = `${members.length} 在线`;
+    // 别人的“操控中”到时自己隐去，不再向后台询问。
+    if (soonest < Infinity) presenceTimer = setTimeout(renderPresence, soonest + 50);
+  }
+  window.StudioPresence?.onChange(renderPresence);
+  // 手机上是一个“● 3 在线”小胶囊，点开看名单。
+  $('#presence-toggle').addEventListener('click', () => {
+    const open = $('#presence').classList.toggle('is-open');
+    $('#presence-toggle').setAttribute('aria-expanded', String(open));
+  });
+  document.addEventListener('click', event => {
+    if ($('#presence').classList.contains('is-open') && !event.target.closest?.('#presence')) { $('#presence').classList.remove('is-open'); $('#presence-toggle').setAttribute('aria-expanded', 'false'); }
+  });
 
   function render() {
+    if (drag) { renderLater = true; return; } // 拖动中不重排网格，放下后再刷新。
+    renderLater = false;
+    syncPresence();
+    document.body.classList.toggle('is-viewer', viewOnly());
     const term = $('#search-input').value.trim().toLocaleLowerCase('zh-CN');
     const sort = $('#sort-select').value;
     const special = isSpecial();
@@ -1005,6 +1277,8 @@
     }).sort((a, b) => kindRank(a) - kindRank(b) || compare(a, b));
     function compare(a, b) {
       if (sort === 'name') return a.name.localeCompare(b.name, 'zh-CN');
+      // 自定义顺序：还没排过的（比如新上传的）排在前面，按添加时间。
+      if (sort === 'custom') return (a.order ?? -1) - (b.order ?? -1) || String(b.modified || b.date).localeCompare(String(a.modified || a.date));
       if (sort === 'largest' || sort === 'smallest') {
         if (a.sizeMB === null) return b.sizeMB === null ? 0 : 1;
         if (b.sizeMB === null) return -1;
@@ -1021,9 +1295,14 @@
     const groups = KINDS.map(([kind, label]) => [kind, activeType === 'image' && kind === 'image' ? '静态图片' : label, visible.filter(asset => kindOf(asset) === kind)]).filter(([, , items]) => items.length);
     const headed = groups.length + (subfolders.length ? 1 : 0) > 1;
     const cards = [];
-    if (subfolders.length) { if (headed) cards.push(groupHeading('folders', '文件夹', subfolders.length)); cards.push(...subfolders.map(path => folderCardFor(path, countIn(path)))); }
+    // 这一层既有文件夹又有素材时，文件夹按折叠状态收起；只有文件夹时直接列出。
+    $('#asset-grid').classList.toggle('folders-collapsed', headed && subfolders.length > 0 && !foldersOpen);
+    if (subfolders.length) { if (headed) cards.push(folderToggle(subfolders.length)); cards.push(...subfolders.map(path => folderCardFor(path, countIn(path)))); }
     for (const [kind, label, items] of groups) { if (headed) cards.push(groupHeading(kind, label, items.length)); cards.push(...items.map(cardFor)); }
+    // 小分栏按出现顺序叠在顶部：第几条就往下错开几格。
+    cards.filter(card => card.classList.contains('grid-group')).forEach((heading, index) => heading.style.setProperty('--i', index));
     window.StudioMotion.grid($('#asset-grid'), cards);
+    watchStuck();
     if (cloudBusy && !visible.length && !subfolders.length) {
       for (let index=0; index<6; index++) { const tile=element('div','asset-skeleton'); tile.setAttribute('aria-hidden','true'); $('#asset-grid').append(tile); }
     }
@@ -1077,18 +1356,40 @@
   function setType(type) { navigate(type); }
 
   function canManage() { return isOpenList() && !!memberSession() && member?.canManage === true && !memberBusy; }
+  // 只看账号（比如给朋友看的“游客”）：只能浏览、搜索、预览；上传、收藏、下载、复制、整理、回收站都不出现。
+  function viewOnly() { return isOpenList() && !!memberSession() && member?.canManage === false; }
   function moreIcon() {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.classList.add('icon'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
     for (const x of [5, 12, 19]) { const dot = document.createElementNS(svg.namespaceURI, 'circle'); dot.setAttribute('cx', x); dot.setAttribute('cy', '12'); dot.setAttribute('r', '1.8'); dot.setAttribute('fill', 'currentColor'); svg.append(dot); }
     return svg;
   }
+  // 复制图片：可直接粘贴到聊天、PS 或剪辑软件。剪贴板只收 PNG，GIF 会变成第一帧。
+  const canCopy = asset => asset.type === 'image' && asset.provider === 'openlist' && Boolean(navigator.clipboard?.write && window.ClipboardItem);
+  function copyImage(asset) {
+    const input = { ...catalog.config }, session = memberSession();
+    const png = (async () => {
+      const result = await window.StudioPreviewCache.load(previewKey(input, session, asset, 'image'), () => window.OpenListClient.resolve(input, asset, AbortSignal.timeout(20000)), { kind: 'image', limit: 20 * 1048576 });
+      if (result.blob.type === 'image/png') return result.blob;
+      const bitmap = await createImageBitmap(result.blob);
+      const canvas = element('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height;
+      canvas.getContext('2d').drawImage(bitmap, 0, 0); bitmap.close?.();
+      return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('这张图片无法复制。')), 'image/png'));
+    })();
+    png.catch(() => {});
+    toast('正在复制…');
+    // 先把“稍后给出图片”交给剪贴板，Safari 才认这次点击；不支持的浏览器等图片好了再写。
+    let writing;
+    try { writing = navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]); }
+    catch { writing = png.then(blob => navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])); }
+    writing.then(() => toast('已复制，可以直接粘贴'), error => toast(error?.name === 'NotAllowedError' ? '浏览器没有允许复制图片。' : error?.message || '这张图片无法复制。'));
+  }
   function showAssetActions(trigger, asset, card) {
     const menu = $('#asset-actions');
     const manage = asset.managed && canManage();
     const items = asset.deleted ? (manage ? [['restore', '恢复素材']] : [])
       : asset.pending ? (manage ? [['trash', '重试移入回收站']] : [])
-      : [['favorite', favorites.has(asset.id) ? '取消收藏' : '收藏'], ['download', '下载'], ...(manage ? [['rename', '重命名'], ['move', '移动到…'], ['trash', '移入回收站']] : [])];
+      : [...(viewOnly() ? [] : [['favorite', favorites.has(asset.id) ? '取消收藏' : '收藏'], ['download', '下载'], ...(canCopy(asset) ? [['copy', '复制图片']] : [])]), ...(manage ? [['rename', '重命名'], ['move', '移动到…'], ['trash', '移入回收站']] : [])];
     if (!items.length) return;
     menu.replaceChildren(...items.map(([action, label]) => {
       const button = element('button', action === 'trash' ? 'danger' : '', label); button.type = 'button';
@@ -1096,6 +1397,7 @@
         menu.hidePopover();
         if (action === 'favorite') toggleFavorite(asset);
         else if (action === 'download') card?.querySelector('.card-download')?.click();
+        else if (action === 'copy') copyImage(asset);
         else openManage(action, asset);
       });
       return button;
@@ -1162,8 +1464,10 @@
         }
       } else await window.OpenListClient.manage(catalog.config, route, body, controller.signal);
       window.StudioMotion.close($('#manage-dialog'));
+      organized();
       if ($('#detail-dialog').open && activeAsset?.id === asset.id) window.StudioMotion.close($('#detail-dialog'));
       if (action.endsWith('-many')) setSelecting(false);
+      if (action === 'folder-create') foldersOpen = true; // 新建后直接看到它。
       // 改名、移动或删除了当前所在的文件夹时，跟着去新的位置。
       if (action === 'folder-edit' && currentFolder && within(currentFolder, intent.current)) {
         currentFolder = removeFolder ? parentOf(intent.current) : next + currentFolder.slice(intent.current.length);
@@ -1199,10 +1503,27 @@
   $('#view-back').addEventListener('click', goBack);
   document.addEventListener('keydown', event => {
     if (event.key !== 'Escape' || event.defaultPrevented) return;
+    if (drag) { dropCard(true); return; }
     if (document.querySelector('dialog[open], [popover]:not(#toast):popover-open') || event.target.closest?.('input,textarea,select')) return;
     if (selecting) setSelecting(false); else goBack();
   });
   window.addEventListener('scroll', () => { if ($('#asset-actions').matches(':popover-open')) $('#asset-actions').hidePopover(); }, { passive: true });
+  // 空格快速预览：指着或选中一张卡片按空格打开，再按空格关上，方向键翻看（像 Mac 的快速查看）。
+  let hoveredCard = null;
+  $('#asset-grid').addEventListener('pointerover', event => { if (event.pointerType === 'mouse') hoveredCard = event.target.closest('.asset-card:not(.folder-card)'); });
+  $('#asset-grid').addEventListener('pointerleave', () => { hoveredCard = null; });
+  document.addEventListener('keydown', event => {
+    if (event.key !== ' ' || event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.target.closest?.('input,textarea,select,video,audio,[contenteditable]')) return;
+    if ($('#detail-dialog').open) {
+      if (event.target.closest?.('#detail-dialog button:not(.dialog-close)')) return;
+      event.preventDefault(); window.StudioMotion.close($('#detail-dialog')); return;
+    }
+    if (document.querySelector('dialog[open], [popover]:not(#toast):popover-open')) return;
+    const card = document.activeElement?.closest?.('.asset-card:not(.folder-card)') || hoveredCard;
+    const asset = card?.isConnected && filteredAssets.find(item => item.id === card.dataset.id);
+    if (!asset || asset.deleted || asset.pending) return;
+    event.preventDefault(); openDetail(asset);
+  });
 
   function updateDetailFavorite() {
     $('#detail-favorite').replaceChildren(icon(favorites.has(activeAsset.id) ? 'heart-filled' : 'heart'), document.createTextNode(favorites.has(activeAsset.id) ? '已收藏' : '收藏'));
@@ -1328,6 +1649,7 @@
   $('#detail-previous').addEventListener('click', () => adjacentAsset(-1));
   $('#detail-next').addEventListener('click', () => adjacentAsset(1));
   $('#empty-login').addEventListener('click', openMember);
+  $('#copyright-button').addEventListener('click', () => window.StudioMotion.open($('#copyright-dialog')));
   document.addEventListener('keydown', event => {
     if (!$('#detail-dialog').open || !['ArrowLeft','ArrowRight'].includes(event.key) || event.target.matches('input,textarea,select,video,audio')) return;
     event.preventDefault(); adjacentAsset(event.key === 'ArrowLeft' ? -1 : 1);
@@ -1386,7 +1708,7 @@
     render();
     $('#search-input').focus({ preventScroll:true });
   });
-  $('#sort-select').addEventListener('change', render);
+  $('#sort-select').addEventListener('change', () => { rememberSort(); render(); });
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
     activeView = button.dataset.view;
     try { localStorage.setItem(VIEW_KEY, activeView); } catch { /* view stays usable */ }
@@ -1493,7 +1815,8 @@
   window.addEventListener('scroll', () => {
     const distance = window.scrollY - previousScrollY;
     previousScrollY = window.scrollY;
-    if (document.activeElement === $('#search-input') || distance <= 2) { showDock(); return; }
+    // 往上、往下滑都先藏起来，停下再出现。
+    if (document.activeElement === $('#search-input') || Math.abs(distance) <= 2) { showDock(); return; }
     dock.classList.add('is-scroll-moving');
     dock.inert = true;
     dock.setAttribute('aria-hidden', 'true');

@@ -1,3 +1,4 @@
+/*! 正经素材库 © 2026 小橙子工作室（XXCHENGZI）保留所有权利。未经书面许可，禁止复制、修改、传播或用于其他项目。详见 LICENSE。 */
 // OpenList 云端连接。身份、目录权限和签名下载由后台校验。
 (function (root) {
   'use strict';
@@ -87,14 +88,14 @@
     if (!Array.isArray(data?.assets) || !Array.isArray(data?.folders) || data.assets.length > 5000) throw new Error('素材管理目录无效。');
     const assets = data.assets.map(file => {
       if (typeof file.id !== 'string' || typeof file.name !== 'string' || !file.name || /[\\/\u0000-\u001f]/.test(file.name) || typeof file.folder !== 'string') throw new Error('云端返回了无效素材。');
-      return { id: file.id, name: file.name, type: type(file.name), folder: file.folder || '根目录', tags: file.folder.split('/').filter(Boolean), description: '', member: '', date: String(file.modified || '').slice(0, 10), modified: String(file.modified || ''), sizeMB: Number(file.size) / 1048576, cloud: true, provider: 'openlist', managed: true, deleted: !!file.deleted, pending: !!file.pending, revision: file.revision, previewUrl: mediaUrl(file.thumb, input), sourceUrl: '' };
+      return { id: file.id, name: file.name, type: type(file.name), folder: file.folder || '根目录', tags: file.folder.split('/').filter(Boolean), description: '', member: '', date: String(file.modified || '').slice(0, 10), modified: String(file.modified || ''), sizeMB: Number(file.size) / 1048576, cloud: true, provider: 'openlist', managed: true, deleted: !!file.deleted, pending: !!file.pending, revision: file.revision, order: Number.isInteger(file.sort_order) ? file.sort_order : null, previewUrl: mediaUrl(file.thumb, input), sourceUrl: '' };
     });
     const access = { canUpload: data.canManage === true, canManage: data.canManage === true, hasWritePermission: data.canManage === true };
     const favorites = Array.isArray(data.favorites) ? data.favorites.filter(id => typeof id === 'string') : [];
     return { assets, folders: data.folders, favorites, folderId: settings.folderPath, name: '素材库', access, syncing: data.syncing === true };
   }
   async function manage(input, action, body = {}, signal) {
-    if (!['list', 'edit', 'move', 'trash', 'restore', 'folder', 'favorite', 'backup', 'resolve'].includes(action)) throw new Error('素材操作无效。');
+    if (!['list', 'edit', 'move', 'order', 'trash', 'restore', 'folder', 'favorite', 'backup', 'resolve'].includes(action)) throw new Error('素材操作无效。');
     return request(input, 'fs/studio_catalog/' + action, { ...body, path: config(input).folderPath }, sessionFor(input), signal);
   }
   async function profile(input, session, signal) {

@@ -1,0 +1,30 @@
+正经素材库 版权声明
+
+版权所有 © 2026 小橙子工作室（XXCHENGZI）。保留所有权利。
+
+一、权利归属
+正经素材库（以下简称“本网站”）由小橙子工作室设计、开发并运营。本网站的界面设计、视觉风格、交互设计与动效设计、页面结构与布局、“正经素材库”字标及小橙子工作室标识，以及本仓库中的网站前端源代码、样式表和相关文档（以下合称“本作品”），其著作权及其他知识产权均归小橙子工作室所有，受《中华人民共和国著作权法》等法律法规及相关国际条约保护。
+
+二、使用限制
+本仓库公开或可被访问，不代表授予任何许可。未经小橙子工作室事先书面许可，任何单位或个人不得以任何方式复制、转载、摘编、修改、改编、翻译、汇编、反向工程、镜像、传播、展示或出租本作品的全部或部分，不得将本作品用于任何商业或非商业项目，亦不得制作与本作品界面、交互或动效实质性相似的作品。
+
+三、第三方内容
+本作品中使用的第三方组件（包括但不限于开源图标与字体）依其各自的许可协议使用，相关权利归原权利人所有，不在本声明保留的范围内；例如图标部分参照 Phosphor Icons（MIT 许可，见 assets/Phosphor-LICENSE.txt）。本网站的后端服务基于开源项目 OpenList-Worker 修改，依 GNU Affero 通用公共许可证第 3 版（AGPL-3.0）提供，不适用本声明。素材库中收录的素材文件，其权利归各自权利人所有。
+
+四、访问与账号
+本网站仅向小橙子工作室授权的成员及受邀访客开放。账号仅限本人使用，不得转借、共享或出售；通过本网站获取的任何内容不得外传，亦不得用于授权范围以外的用途。
+
+五、侵权处理
+对任何侵犯上述权利的行为，小橙子工作室保留依法追究法律责任的权利，包括但不限于要求停止侵权、删除相关内容、消除影响及赔偿损失。
+
+六、授权与联系
+如需授权或进行侵权投诉，请通过小橙子工作室官方渠道联系：https://space.bilibili.com/35734399
+
+小橙子工作室
+2026 年 10 月
+
+----------------------------------------------------------------------
+
+Copyright © 2026 XXCHENGZI Studio (小橙子工作室). All rights reserved.
+
+The design, visual style, interaction and motion design, layout, logotype, and the front-end source code, stylesheets and documentation in this repository are the exclusive property of XXCHENGZI Studio. Public visibility of this repository does not grant any license. No part of this work may be copied, modified, distributed, mirrored, or used in any other project, commercial or non-commercial, without prior written permission. Third-party components remain under their own licenses (e.g. Phosphor Icons, MIT). The back-end service is a modified version of OpenList-Worker and is provided under the GNU AGPL-3.0, which this notice does not override.
