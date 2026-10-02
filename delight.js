@@ -84,15 +84,12 @@
     if (button) setTimeout(() => burstFrom(button, { count: 14, power: 58 }), 240);
   }
 
-  // ---------- 用户头像：转过身去（背面是黑色剪影），停一下，再转回来。指着就播放；
-  // 正在播放时点击，不从头重来，而是加速把剩下的部分走完，紧接着完整播放一次点击动画，再打开账号窗口。 ----------
+  // ---------- 用户头像：指着时变成相反色（样式里做）；点击时先往回拧一点（预备），再绕竖轴完整转一圈、
+  // 略过头后落定，转到一半露出背面的黑色剪影，这时打开账号窗口（舞台呈现）。转动中再点不会打断或重来。 ----------
   const FLIP = [
-    { transform: 'rotateY(0deg)', easing: OUT },
-    { transform: 'rotateY(-24deg) scale(.94)', offset: .12, easing: 'cubic-bezier(.5,0,.3,1)' },
-    { transform: 'rotateY(198deg) scale(1.06)', offset: .4, easing: 'ease-out' },
-    { transform: 'rotateY(180deg) scale(1)', offset: .5 },
-    { transform: 'rotateY(180deg) scale(1)', offset: .66, easing: 'cubic-bezier(.5,0,.3,1)' },
-    { transform: 'rotateY(372deg) scale(1.03)', offset: .9, easing: 'ease-out' },
+    { transform: 'rotateY(0deg) scale(1)', easing: OUT },
+    { transform: 'rotateY(-22deg) scale(.94)', offset: .14, easing: 'cubic-bezier(.45,0,.2,1)' },
+    { transform: 'rotateY(378deg) scale(1.04)', offset: .84, easing: 'ease-out' },
     { transform: 'rotateY(360deg) scale(1)' },
   ];
   function setupAvatar() {
@@ -104,24 +101,14 @@
     const back = document.createElement('span'); back.className = 'flip-face flip-back';
     back.append(icon('<circle cx="12" cy="7.5" r="4.5" fill="currentColor"/><path d="M4 21v-2a8 6 0 0 1 16 0v2Z" fill="currentColor"/>', 'silhouette'));
     flip.append(front, back); button.append(flip);
-    let turning = null, queued = false, passing = false;
-    const turn = () => { turning = play(flip, FLIP, { duration: 1300 }); const mine = turning; done(mine).then(() => { if (turning === mine) turning = null; }); return mine; };
-    // 点击动画：完整转一次，转到背面时打开账号窗口（舞台呈现）。
-    const clickTurn = () => { turn(); setTimeout(() => { passing = true; button.click(); passing = false; }, 420); };
-    button.addEventListener('pointerenter', event => { if (event.pointerType === 'mouse' && !turning && !queued) turn(); });
+    let turning = null, passing = false;
     button.addEventListener('click', event => {
       if (passing || reduced.matches) return;
       event.stopImmediatePropagation(); event.preventDefault();
-      if (queued) return;
-      if (turning && turning.playState === 'running') {
-        // 正在转：剩下的部分加速走完，再接一次完整的点击动画。
-        queued = true;
-        const current = turning;
-        current.updatePlaybackRate(3.2);
-        done(current).then(() => { queued = false; clickTurn(); });
-        return;
-      }
-      clickTurn();
+      if (turning) return; // 正在转：这一次的窗口马上就会打开。
+      turning = play(flip, FLIP, { duration: 900 });
+      done(turning).then(() => { turning = null; });
+      setTimeout(() => { passing = true; button.click(); passing = false; }, 380);
     }, true);
   }
 
@@ -187,7 +174,9 @@
     const button = $('#upload-button');
     if (!button) return;
     const energy = document.createElement('span'); energy.className = 'energy'; energy.setAttribute('aria-hidden', 'true');
-    button.prepend(energy);
+    // 登录后网页会重画上传按钮的图标，把能量层一起清掉；每次用之前确认它还在。
+    const ensure = () => { if (energy.parentNode !== button) button.prepend(energy); };
+    ensure();
     let charge = null, spent = false;
     const pop = (scale = 1.22) => play(button.querySelector('svg'), [
       { transform: 'scale(1)' }, { transform: `scale(${scale * 1.06}, ${scale * .88})`, offset: .3 },
@@ -208,6 +197,7 @@
     };
     button.addEventListener('pointerenter', event => {
       if (event.pointerType !== 'mouse' || spent || charge || reduced.matches) return;
+      ensure();
       button.classList.add('is-charging');
       // 慢入：开始慢、逐渐加快地涨满，像在蓄力。
       charge = play(energy, [{ translate: '0 115%' }, { translate: '0 0%' }], { duration: 1300, easing: 'cubic-bezier(.4,0,.75,.75)', fill: 'forwards' });
@@ -215,7 +205,7 @@
       done(mine).then(() => { if (charge === mine && mine.playState === 'finished') { spent = true; blast(false); } });
     });
     button.addEventListener('pointerleave', () => { spent = false; drain(false); });
-    button.addEventListener('click', () => { spent = true; blast(true); });
+    button.addEventListener('click', () => { ensure(); spent = true; blast(true); });
   }
 
   // ---------- 三条线：指着时按随机顺序依次从左边弹出（只横向伸缩）；点击时自上而下依次以左端为轴抖一下。 ----------

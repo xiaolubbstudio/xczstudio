@@ -423,6 +423,8 @@ html[data-theme="light"] { --heart:#d9566a; }
 @media (hover:hover) and (pointer:fine) { body .action-rail #favorites-button:not(.active):hover,html[data-theme="light"] body .action-rail #favorites-button:not(.active):hover { color:var(--heart); } }
 /* 刷新图标的转动全部由 delight.js 按转速控制（加速、保持、减速都连续），不再叠一个匀速的加载转圈。 */
 body[data-loading="true"] #refresh-button .icon { animation:none; }
+/* 用户头像：指着时变成相反色。 */
+@media (hover:hover) and (pointer:fine) { body .action-rail #member-avatar:hover,html[data-theme="light"] body .action-rail #member-avatar:hover { background:var(--ink); color:var(--page); } }
 /* 刷新：转圈时气泡变成相反色。 */
 body .action-rail #refresh-button.is-inverted,html[data-theme="light"] body .action-rail #refresh-button.is-inverted { background:var(--ink); color:var(--page); }
 /* 上传：能量从底部涨上来，顶上一圈小波浪在流动；涨的时候图标变白。 */
@@ -474,6 +476,20 @@ footer .copyright { margin:0; }
 .upload-island.is-done .bar { stroke:#30d158; }
 .upload-island.is-failed .bar { stroke:#ff9f0a; }
 body.has-upload-island .toast { top:62px !important; }
+
+/* 排序：胶囊按钮 + 磨砂下拉（和“···”菜单同款），不用系统自带的下拉框。 */
+.sort-select[hidden] { display:none !important; }
+.sort-button { display:inline-flex; align-items:center; gap:8px; height:36px; padding:0 12px 0 14px; border:0; border-radius:999px; background:var(--surface-2); color:var(--muted); font:inherit; font-size:13px; cursor:pointer; transition:background-color 200ms ease,color 200ms ease,scale 560ms var(--spring-bounce); }
+.sort-button .icon { width:12px; height:12px; rotate:90deg; transition:rotate 460ms var(--spring-bounce); }
+.sort-button[aria-expanded="true"] { background:var(--surface-3); color:var(--ink); }
+.sort-button[aria-expanded="true"] .icon { rotate:-90deg; }
+.sort-button:active { scale:.95; transition-duration:120ms; }
+.sort-button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+@media (hover:hover) and (pointer:fine) { .sort-button:hover { background:var(--surface-3); color:var(--ink); } }
+.sort-menu { width:auto; min-width:150px; }
+.sort-menu button { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.sort-menu button.is-current { color:var(--ink); font-weight:600; }
+.sort-menu button .icon { width:15px; height:15px; color:var(--accent); }
 
 /* 底栏缩小：取消 1.15 倍放大，窄一些、矮一些；选中项是浅色底块，图标点出强调色。 */
 body .library-dock { transform:translateX(-50%); width:min(660px,calc(100vw - 200px)); max-width:none; gap:8px; }
@@ -530,9 +546,11 @@ body::before { content:none; display:none; }
 :root { --stuck-bg:rgba(14,14,15,.985); }
 html[data-theme="light"] { --stuck-bg:rgba(243,243,245,.985); }
 body .section-heading.is-stuck::before,body #asset-grid>.grid-group.is-stuck::before { backdrop-filter:none; -webkit-backdrop-filter:none; }
-/* 底部两栏：滑动中淡出后彻底隐藏，看不见的时候不再做模糊；停下时立刻显示再弹回。 */
-.library-dock { transition:opacity 240ms ease,translate 680ms var(--spring-bounce),visibility 0s; }
-.library-dock.is-scroll-moving { visibility:hidden; transition:opacity 150ms ease,translate 200ms var(--ease-exit),visibility 0s linear 150ms; }
+/* 底部两栏：淡出时保留图层（彻底隐藏会让停下时重建磨砂图层、头几帧掉帧）；常驻独立的显卡图层，
+   模糊半径减到 18px，弹回距离缩到 12px，移动时每帧要重算的模糊少很多，回弹的手感保留。 */
+.library-dock { will-change:translate,opacity; }
+.library-dock.is-scroll-moving { translate:0 12px; }
+body .floating-search .search,html[data-theme="light"] body .floating-search .search,body .category-shelf,html[data-theme="light"] body .category-shelf { backdrop-filter:blur(18px) saturate(160%); -webkit-backdrop-filter:blur(18px) saturate(160%); }
 /* 触屏设备上的圆按钮不做背景模糊。 */
 @media not ((hover:hover) and (pointer:fine)) { body .action-rail :is(.button,.icon-button,.avatar) { backdrop-filter:none; -webkit-backdrop-filter:none; } }
 /* 长列表：屏幕外的卡片先不排版、不绘制，滚到附近再画。 */

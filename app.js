@@ -1318,6 +1318,7 @@
     if (drag) { renderLater = true; return; } // 拖动中不重排网格，放下后再刷新。
     renderLater = false;
     syncPresence();
+    syncSort();
     document.body.classList.toggle('is-viewer', viewOnly());
     const term = $('#search-input').value.trim().toLocaleLowerCase('zh-CN');
     const sort = $('#sort-select').value;
@@ -1582,7 +1583,10 @@
     if (document.querySelector('dialog[open], [popover]:not(#toast):popover-open') || event.target.closest?.('input,textarea,select')) return;
     if (selecting) setSelecting(false); else goBack();
   });
-  window.addEventListener('scroll', () => { if ($('#asset-actions').matches(':popover-open')) $('#asset-actions').hidePopover(); }, { passive: true });
+  window.addEventListener('scroll', () => {
+    if ($('#asset-actions').matches(':popover-open')) $('#asset-actions').hidePopover();
+    if ($('#sort-menu').matches(':popover-open')) $('#sort-menu').hidePopover();
+  }, { passive: true });
   // 空格快速预览：指着或选中一张卡片按空格打开，再按空格关上，方向键翻看（像 Mac 的快速查看）。
   let hoveredCard = null;
   $('#asset-grid').addEventListener('pointerover', event => { if (event.pointerType === 'mouse') hoveredCard = event.target.closest('.asset-card:not(.folder-card)'); });
@@ -1784,6 +1788,29 @@
     $('#search-input').focus({ preventScroll:true });
   });
   $('#sort-select').addEventListener('change', () => { rememberSort(); render(); });
+  // 排序菜单：和“···”菜单同一种磨砂样式；当前那项加粗带勾。选中后写回隐藏的 select，沿用原来的排序逻辑。
+  function syncSort() { $('#sort-label').textContent = $('#sort-select').selectedOptions[0]?.textContent || '排序'; }
+  $('#sort-button').addEventListener('click', () => {
+    const menu = $('#sort-menu'), select = $('#sort-select');
+    if (menu.matches(':popover-open')) { menu.hidePopover(); return; }
+    menu.replaceChildren(...[...select.options].map(option => {
+      const current = option.value === select.value;
+      const item = element('button', current ? 'is-current' : '', option.textContent); item.type = 'button';
+      item.setAttribute('role', 'menuitemradio'); item.setAttribute('aria-checked', String(current));
+      if (current) item.append(icon('check'));
+      item.addEventListener('click', () => {
+        menu.hidePopover();
+        if (select.value !== option.value) { select.value = option.value; select.dispatchEvent(new Event('change')); }
+      });
+      return item;
+    }));
+    menu.showPopover();
+    const rect = $('#sort-button').getBoundingClientRect();
+    menu.style.left = `${Math.max(12, Math.min(rect.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 12))}px`;
+    menu.style.top = `${Math.max(12, Math.min(rect.bottom + 6, innerHeight - menu.offsetHeight - 12))}px`;
+    menu.querySelector('.is-current')?.focus({ preventScroll: true });
+  });
+  $('#sort-menu').addEventListener('toggle', event => $('#sort-button').setAttribute('aria-expanded', String(event.newState === 'open')));
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
     activeView = button.dataset.view;
     try { localStorage.setItem(VIEW_KEY, activeView); } catch { /* view stays usable */ }
@@ -1898,7 +1925,40 @@
     clearTimeout(dockIdleTimer);
     dockIdleTimer = setTimeout(showDock, 120);
   }, { passive:true });
-  window.addEventListener('scrollend', showDock, { passive:true });
+  window.addEventListener('scrollend', () => { if (!wheelFrame) showDock(); }, { passive:true });
+  // 鼠标滚轮：每滚一格，末尾加一点点缓停（每帧走完剩下距离的四成，约 0.1 秒基本到位），不会让人找不到停的位置。
+  // 只处理整格滚动的鼠标滚轮；触控板、键盘、拖滚动条、按住 Ctrl 缩放，以及弹窗和菜单里的滚动都保持浏览器原样。
+  let wheelTarget = null, wheelFrame = 0, wheelLast = 0, wheelSet = 0;
+  const smoothWheel = matchMedia('(prefers-reduced-motion: reduce)');
+  function scrollsInside(node) {
+    for (let el = node instanceof Element ? node : null; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+      if (el.scrollHeight > el.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return true;
+    }
+    return false;
+  }
+  function wheelStep(now) {
+    // 有人在别处动了滚动位置（拖滚动条、键盘），就交还给浏览器。
+    if (Math.abs(scrollY - wheelSet) > 2) { wheelTarget = null; wheelFrame = 0; return; }
+    const dt = Math.min(50, now - wheelLast); wheelLast = now;
+    const rest = wheelTarget - scrollY;
+    // 剩 1 像素以内直接到位；每帧至少走 1 像素，免得取整后卡在最后一点不动。
+    if (Math.abs(rest) <= 1) { scrollTo(0, wheelTarget); wheelTarget = null; wheelFrame = 0; return; }
+    let move = rest * (1 - Math.pow(.6, dt / 16.7));
+    if (Math.abs(move) < 1) move = Math.sign(rest);
+    scrollTo(0, scrollY + move);
+    wheelSet = scrollY;
+    wheelFrame = requestAnimationFrame(wheelStep);
+  }
+  window.addEventListener('wheel', event => {
+    if (event.ctrlKey || event.defaultPrevented || smoothWheel.matches || document.querySelector('dialog[open]')) return;
+    const notch = event.deltaMode !== 0 || (Math.abs(event.wheelDeltaY || 0) >= 120 && Math.abs(event.wheelDeltaY) % 120 === 0);
+    if (!notch || Math.abs(event.deltaX) > Math.abs(event.deltaY) || scrollsInside(event.target)) return;
+    event.preventDefault();
+    const step = event.deltaMode === 1 ? event.deltaY * 40 : event.deltaMode === 2 ? event.deltaY * innerHeight : event.deltaY;
+    const max = document.documentElement.scrollHeight - innerHeight;
+    wheelTarget = Math.max(0, Math.min(max, (wheelTarget ?? scrollY) + step));
+    if (!wheelFrame) { wheelLast = performance.now(); wheelSet = scrollY; wheelFrame = requestAnimationFrame(wheelStep); }
+  }, { passive: false });
   dock.addEventListener('focusin', showDock);
   dock.addEventListener('pointerenter', showDock);
   render();

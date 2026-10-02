@@ -78,6 +78,7 @@
     if (open === 'folders') document.querySelector('.folder-toggle button')?.click();
     if (open === 'presence') document.querySelector('#presence-toggle')?.click();
     if (open === 'copyright') document.querySelector('#copyright-button')?.click();
+    if (open === 'sort') document.querySelector('#sort-button')?.click();
     // 选两张后拖起来停在“表情包”文件夹上，看浮起、叠放和目标高亮。
     if (open === 'drag') {
       document.querySelector('.folder-toggle button')?.click();
