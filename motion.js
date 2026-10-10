@@ -72,7 +72,8 @@
         const next = card.getBoundingClientRect(), old = positions.get(card.dataset.id);
         if (next.top > innerHeight || next.bottom < 0) continue;
         if (old && (Math.abs(old.left-next.left)>1 || Math.abs(old.top-next.top)>1)) {
-          animate(card, [{ transform: `translate(${old.left-next.left}px,${old.top-next.top}px)` }, { transform: 'none' }], 560, 0, EASE.snappy);
+          // 缓存目录换成最新目录也可能改变行高，仍在最终位置换入。
+          animate(card, [{ opacity:.65 }, { opacity:1 }], 180, 0, EASE.smooth);
         } else if (!old && entered < 10) {
           animate(card, [{ opacity:0 }, { opacity:1 }], 200, Math.min(entered++*12, 72), EASE.smooth);
         }

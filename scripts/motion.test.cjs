@@ -42,13 +42,12 @@ test('initial render and directory round trip fade at final positions, even with
   stationary(calls);
 });
 
-test('same-directory reorder retains motion, but offscreen cards do not slide into the viewport', () => {
+test('same-directory refresh and offscreen cards fade without importing old positions', () => {
   const { motion, card, grid, calls } = fixture();
   motion.grid(grid, [card('visible', 100), card('offscreen', -500)], 'root');
   calls.length = 0;
   motion.grid(grid, [card('visible', 300), card('offscreen', 500)], 'root');
-  assert.equal(calls[0].frames[0].transform, 'translate(0px,-200px)');
-  stationary(calls.filter(call => call.id === 'offscreen'));
+  stationary(calls);
 });
 
 test('folder expansion and collapse use opacity only, including interrupted transitions', async () => {
@@ -56,6 +55,7 @@ test('folder expansion and collapse use opacity only, including interrupted tran
   const image = card('image'), folder = card('folder');
   folder.visible = false; grid.children = [folder, image];
   motion.reflow(grid, () => { image.top = 400; }); // previous drag motion still running
+  assert.equal(calls[0].frames[0].transform, 'translate(0px,-200px)', 'dragging retains its movement animation');
   calls.length = 0;
   motion.reflow(grid, () => { folder.visible = true; image.top = 500; }, [], { stationary: true });
   stationary(calls);
