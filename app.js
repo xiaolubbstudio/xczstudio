@@ -1442,7 +1442,7 @@
     const grid = $('#asset-grid');
     grid.querySelector('.folder-toggle button')?.setAttribute('aria-expanded', String(open));
     if (!grid.querySelector('.folder-toggle')) return;
-    window.StudioMotion.reflow(grid, () => grid.classList.toggle('folders-collapsed', !foldersOpen), open ? [] : [...grid.querySelectorAll('.folder-card')]);
+    window.StudioMotion.reflow(grid, () => grid.classList.toggle('folders-collapsed', !foldersOpen), open ? [] : [...grid.querySelectorAll('.folder-card')], { stationary:true });
   }
 
   // 成员在线：左侧列出在线的人（绿点 + Online + 名字）；正在上传、拖动或整理的显示“操控中”和在哪个文件夹。
@@ -1569,7 +1569,7 @@
     for (const [kind, label, items] of groups) { if (headed) cards.push(groupHeading(kind, label, items.length)); cards.push(...items.map(cardFor)); }
     // 小分栏按出现顺序叠在顶部：第几条就往下错开几格。
     cards.filter(card => card.classList.contains('grid-group')).forEach((heading, index) => heading.style.setProperty('--i', index));
-    window.StudioMotion.grid($('#asset-grid'), cards);
+    window.StudioMotion.grid($('#asset-grid'), cards, JSON.stringify([activeType,currentFolder,activeView,term]));
     stickyTops = null;
     watchStuck();
     if (cloudBusy && !visible.length && !subfolders.length) {

@@ -46,6 +46,7 @@
 !/motion.js
 !/folder-preview.js
 !/scripts/folder-preview.test.cjs
+!/scripts/motion.test.cjs
 !/motion.css
 !/assets/studio-face.png
 !/assets/ui-icons.svg

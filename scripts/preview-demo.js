@@ -25,6 +25,38 @@
   const favorites = new Set(['demo-1']);
   // /?demo&hover-test checks pointer previews and local-only playback through the real UI handlers.
   const hoverTest = new URLSearchParams(location.search).has('hover-test');
+  // 只在本机采集网格动画，确认文件夹展开、目录往返没有从旧坐标滑入。
+  if (new URLSearchParams(location.search).has('grid-motion-test')) addEventListener('load', () => {
+    const report = document.createElement('pre'); report.id = 'grid-motion-report'; report.hidden = true;
+    document.body.append(report);
+    const runs = [];
+    let token = 0;
+    const capture = action => {
+      const current = ++token, tracks = new Map();
+      let start;
+      const frame = time => {
+        if (current !== token) return;
+        start ??= time;
+        const grid = document.querySelector('#asset-grid');
+        for (const animation of grid.getAnimations({ subtree:true })) {
+          const target = animation.effect?.target;
+          if (!target?.matches('.asset-card')) continue;
+          tracks.set(animation, { id:target.dataset.id, frames:animation.effect.getKeyframes().map(key => ({ transform:key.transform, opacity:key.opacity })) });
+        }
+        if (time - start < 700) requestAnimationFrame(frame);
+        else {
+          runs.push({ action, path:location.hash, collapsed:grid.classList.contains('folders-collapsed'), tracks:[...tracks.values()] });
+          report.textContent = JSON.stringify(runs.slice(-12));
+        }
+      };
+      requestAnimationFrame(frame);
+    };
+    document.addEventListener('click', event => {
+      const trigger = event.target.closest('.folder-toggle button,.folder-preview,#view-back,.crumb,[data-type]');
+      if (trigger) capture(trigger.textContent.trim() || trigger.getAttribute('aria-label'));
+    });
+    capture('initial');
+  });
   // 只在本机记录标题的实际合成动画轨迹，包含连续打断和减少动态效果。
   const motionTest = new URLSearchParams(location.search).has('motion-test');
   if (motionTest && new URLSearchParams(location.search).has('reduced')) {

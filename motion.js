@@ -31,7 +31,8 @@
     const previous = animations.get(node);
     if (previous?.playState === 'running' && !options.pseudoElement) {
       const style = getComputedStyle(node);
-      frames[0] = { ...frames[0], transform: style.transform, opacity: style.opacity };
+      frames[0] = { ...frames[0], opacity: style.opacity };
+      if (frames.some(frame => 'transform' in frame)) frames[0].transform = style.transform;
     }
     if (!options.pseudoElement) previous?.cancel();
     if (reduced.matches || inputMode === 'keyboard') return null;
@@ -55,8 +56,12 @@
     const complete = () => { if (dialog.classList.contains('is-closing')) { dialog.close(); dialog.classList.remove('is-closing'); dialog.getAnimations({ subtree: true }).forEach(item => item.cancel()); } };
     if (animation) { animation.finished.then(complete, () => {}); setTimeout(complete, 240); } else complete();
   }
-  function grid(node, children) {
-    const positions = new Map([...node.children].map(card => [card.dataset.id, card.getBoundingClientRect()]));
+  const gridContexts = new WeakMap();
+  function grid(node, children, context) {
+    const sameContext = gridContexts.has(node) && gridContexts.get(node) === context;
+    gridContexts.set(node, context);
+    // 不把另一个目录的卡片坐标带到这里；屏幕外的旧坐标也不作滑动起点。
+    const positions = new Map(sameContext ? [...node.children].map(card => [card.dataset.id, card.getBoundingClientRect()]).filter(([, box]) => box.top < innerHeight && box.bottom > 0) : []);
     const focused = document.activeElement;
     const focusedId = focused?.closest('.asset-card')?.dataset.id;
     const focusedClass = focused?.classList?.[0];
@@ -69,7 +74,7 @@
         if (old && (Math.abs(old.left-next.left)>1 || Math.abs(old.top-next.top)>1)) {
           animate(card, [{ transform: `translate(${old.left-next.left}px,${old.top-next.top}px)` }, { transform: 'none' }], 560, 0, EASE.snappy);
         } else if (!old && entered < 10) {
-          animate(card, [{ opacity:0, transform:'translateY(18px) scale(.95)' }, { opacity:1, offset:.35 }, { opacity:1, transform:'none' }], 600, Math.min(entered++*28, 240), EASE.snappy);
+          animate(card, [{ opacity:0 }, { opacity:1 }], 200, Math.min(entered++*12, 72), EASE.smooth);
         }
       }
     }
@@ -230,8 +235,8 @@
       if (!prevented) close(dialog);
     }));
   }
-  // 网格里显示或隐藏一部分卡片：要藏的先快速收起，其余卡片用弹簧滑到新位置，新出现的依次弹出。
-  function reflow(node, mutate, leaving = []) {
+  // 文件夹展开、收起在最终位置淡入；拖拽排序仍用弹簧衔接新旧位置。
+  function reflow(node, mutate, leaving = [], options = {}) {
     const visible = child => child.getClientRects().length > 0;
     const run = () => {
       const before = new Map([...node.children].filter(visible).map(child => [child, child.getBoundingClientRect()]));
@@ -241,11 +246,16 @@
         if (!visible(child)) continue;
         const next = child.getBoundingClientRect(), old = before.get(child);
         if (next.top > innerHeight || next.bottom < 0) continue;
-        if (!old) animate(child, [{ opacity: 0, transform: 'translateY(-10px) scale(.94)' }, { opacity: 1, offset: .35 }, { opacity: 1, transform: 'none' }], 560, Math.min(entered++ * 30, 240), EASE.bounce);
-        else if (Math.abs(old.left - next.left) > 1 || Math.abs(old.top - next.top) > 1) animate(child, [{ transform: `translate(${old.left - next.left}px,${old.top - next.top}px)` }, { transform: 'none' }], 560, 0, EASE.snappy);
+        if (!old) {
+          if (options.stationary) animate(child, [{ opacity:0 }, { opacity:1 }], 200, Math.min(entered++*12,72), EASE.smooth);
+          else animate(child, [{ opacity: 0, transform: 'translateY(-10px) scale(.94)' }, { opacity: 1, offset: .35 }, { opacity: 1, transform: 'none' }], 560, Math.min(entered++ * 30, 240), EASE.bounce);
+        } else if (Math.abs(old.left - next.left) > 1 || Math.abs(old.top - next.top) > 1) {
+          if (options.stationary) animate(child, [{ opacity:.65 }, { opacity:1 }], 180, 0, EASE.smooth);
+          else animate(child, [{ transform: `translate(${old.left - next.left}px,${old.top - next.top}px)` }, { transform: 'none' }], 560, 0, EASE.snappy);
+        }
       }
     };
-    const exits = leaving.filter(visible).map(child => animate(child, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-6px) scale(.96)' }], 150, 0, EASE.exit, { fill: 'forwards' })).filter(Boolean);
+    const exits = leaving.filter(visible).map(child => animate(child, options.stationary ? [{ opacity:1 }, { opacity:0 }] : [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-6px) scale(.96)' }], 150, 0, EASE.exit, { fill: 'forwards' })).filter(Boolean);
     if (!exits.length) { run(); return; }
     Promise.all(exits.map(item => item.finished.catch(() => {}))).then(() => { run(); exits.forEach(item => item.cancel()); });
   }
