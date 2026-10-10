@@ -19,6 +19,36 @@
   if (new URLSearchParams(location.search).has('many')) { const base = names.slice(); for (let k = 1; k < 25; k++) base.forEach(([n, ...rest]) => names.push([n.replace(/(.[^.]+)$/, '-' + k + '$1'), ...rest])); }
   const assets = names.map(([name, folder], i) => ({ id: 'demo-' + i, name, folder, size: Math.round((1.3 + i * 2.7) * 1048576), modified: `2026-09-${String(30 - i).padStart(2, '0')}T10:00:00Z`, added_ms: Date.UTC(2026,9,11,10,0,0) - i * 60000, deleted: false, pending: false, revision: 1, thumb: '', uploader: 'angel_ni' }));
   const favorites = new Set(['demo-1']);
+  // /?demo&hover-test checks pointer previews and local-only playback through the real UI handlers.
+  const hoverTest = new URLSearchParams(location.search).has('hover-test');
+  const hoverCounts = { api: 0, media: 0 };
+  let hoverVideo = null;
+  if (hoverTest) addEventListener('load', () => {
+    const controls = document.createElement('div'); controls.id = 'hover-test-controls'; controls.style.cssText = 'position:fixed;top:0;left:0;z-index:80;background:#fff;padding:6px;display:flex;gap:6px;font-size:12px';
+    const result = document.createElement('span'); result.id = 'hover-test-counts';
+    const update = () => { result.textContent = JSON.stringify(hoverCounts); }; update();
+    const add = (label, action) => { const button = document.createElement('button'); button.textContent = label; button.onclick = action; controls.append(button); };
+    const point = type => { const button = [...document.querySelectorAll('.asset-card:not(.folder-card) .preview-button')].find(node => assets.find(a => a.id === node.closest('.asset-card').dataset.id)?.name.endsWith(type)); button?.dispatchEvent(new PointerEvent('pointerenter', { pointerType:'mouse' })); };
+    add('图片悬停', () => point('.png')); add('动图悬停', () => point('.gif')); add('视频悬停', () => point('.mp4'));
+    add('停止悬停', () => document.querySelector('.asset-hover-preview')?.dispatchEvent(new PointerEvent('pointerleave', { pointerType:'mouse' })));
+    for (const [suffix, part] of [['.gif','image'],['.mp4','video']]) add('缓存' + suffix, async () => {
+      try {
+        if (part === 'video') {
+          const canvas = document.createElement('canvas'); canvas.width = 160; canvas.height = 90;
+          const ctx = canvas.getContext('2d'), stream = canvas.captureStream(12), chunks = [];
+          const recorder = new MediaRecorder(stream, { mimeType:'video/webm' });
+          const finished = new Promise(resolve => { recorder.ondataavailable = event => chunks.push(event.data); recorder.onstop = resolve; });
+          recorder.start(); let frame = 0;
+          const timer = setInterval(() => { ctx.fillStyle = frame++ % 2 ? '#ff8a3d' : '#7678ed'; ctx.fillRect(0,0,160,90); }, 80);
+          await new Promise(resolve => setTimeout(resolve,650)); recorder.stop(); await finished; clearInterval(timer); stream.getTracks().forEach(track => track.stop()); hoverVideo = new Blob(chunks,{type:'video/webm'});
+        }
+        const asset = assets.find(a => a.name.endsWith(suffix)), input = window.STUDIO_CATALOG.config;
+        await window.StudioPreviewCache.load([input.provider,input.folderUrl,input.folderPath || '/','demo',asset.id,asset.modified,asset.size/1048576,part,'original-v1'], () => 'https://hover.example.test/' + part, { kind:part==='video'?'video':'image',limit:32*1048576 });
+        update();
+      } catch (error) { result.textContent = error.message; }
+    });
+    add('请求计数', update); controls.append(result); document.body.append(controls);
+  });
   // /?demo&upload-test exercises queue cancellation without uploading real files.
   if (new URLSearchParams(location.search).has('upload-test')) addEventListener('load', () => {
     const log = document.createElement('pre'); log.id = 'upload-test-log'; log.hidden = true; document.body.append(log);
@@ -48,6 +78,10 @@
   });
   const original = window.fetch.bind(window);
   window.fetch = async (url, options) => {
+    if (hoverTest && new URL(url,location.href).hostname === 'hover.example.test') {
+      hoverCounts.media++;
+      return new Response(new URL(url).pathname === '/video' ? hoverVideo : Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'),c=>c.charCodeAt(0)),{headers:{'Content-Type':new URL(url).pathname === '/video'?'video/webm':'image/gif'}});
+    }
     if (previewTest && new URL(url, location.href).hostname === 'preview.example.test') {
       const requested = new URL(url).pathname;
       const index = Number(requested.split('/').at(-1));
@@ -56,6 +90,7 @@
     }
     const path = new URL(url, location.href).pathname;
     if (!path.startsWith('/api/')) return original(url, options);
+    if (hoverTest) hoverCounts.api++;
     // 移动、排序、收藏在这次页面里记住，刷新目录后还在。
     const body = (() => { try { return JSON.parse(options?.body || '{}'); } catch { return {}; } })();
     if (previewTest && path.endsWith('/list') && body.refresh) previewRecovered = true;

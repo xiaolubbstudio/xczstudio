@@ -78,6 +78,7 @@
   let activeAsset = null;
   let filteredAssets = [];
   let previewRequest = null;
+  let hoverPreview = null, hoverTimer = 0, hoverCloseTimer = 0;
   let previewObjectUrls = [];
   function stopPreview() {
     previewRequest?.abort(); previewRequest = null;
@@ -160,6 +161,7 @@
     return [input.provider || 'pcloud', input.folderUrl || '', input.folderPath || '/', session?.username || session?.uid || 'public', asset.id, asset.modified || asset.date, asset.sizeMB, part, 'original-v1'];
   }
   function clearThumbnails() {
+    closeHoverPreview();
     thumbnailObserver?.disconnect(); thumbnailObserver = null;
     thumbnailController.abort(); thumbnailController = new AbortController();
     for (const item of thumbnails.values()) if (item.url) URL.revokeObjectURL(item.url);
@@ -912,6 +914,7 @@
   function cancelPress() { if (press) clearTimeout(press.timer); press = null; }
   const canReorder = d => d.ids.length === 1 && activeType === 'all' && Boolean(currentFolder) && !$('#search-input').value.trim();
   function liftCard(x, y) {
+    closeHoverPreview();
     const { card, asset, pointer, type } = press; cancelPress();
     if (!card.isConnected) return;
     if (manageBusy) { toast('请先等待当前操作完成。'); return; }
@@ -1219,6 +1222,7 @@
     }
     content.append(titleRow, meta);
     card.append(preview, content);
+    bindHoverPreview(preview, asset);
     draggable(card, asset);
     return card;
   }
@@ -1227,6 +1231,75 @@
   const KINDS = [['image', '图片'], ['gif', '动图'], ['video', '视频'], ['audio', '音频'], ['other', '其他']];
   const kindOf = asset => asset.type === 'animation' || (asset.type === 'image' && /.(gif|apng)$/i.test(asset.name)) ? 'gif' : KINDS.some(([kind]) => kind === asset.type) ? asset.type : 'other';
   const kindRank = asset => KINDS.findIndex(([kind]) => kind === kindOf(asset));
+
+  // Hover reads only bytes already on this device. Original media still needs an explicit click.
+  function closeHoverPreview() {
+    clearTimeout(hoverTimer); clearTimeout(hoverCloseTimer);
+    if (!hoverPreview) return;
+    hoverPreview.controller.abort();
+    hoverPreview.node.querySelectorAll('video').forEach(video => { video.pause(); video.removeAttribute('src'); video.load(); });
+    hoverPreview.node.remove();
+    hoverPreview.urls.forEach(url => URL.revokeObjectURL(url));
+    hoverPreview = null;
+  }
+  function bindHoverPreview(button, asset) {
+    if (!['image', 'animation', 'video'].includes(asset.type) || asset.deleted || asset.pending) return;
+    button.addEventListener('pointerenter', event => {
+      if (event.pointerType !== 'mouse' || !matchMedia('(hover:hover) and (pointer:fine)').matches || selecting || drag || document.querySelector('dialog[open]')) return;
+      closeHoverPreview();
+      hoverTimer = setTimeout(() => showHoverPreview(button, asset), 380);
+    });
+    button.addEventListener('pointerleave', () => {
+      clearTimeout(hoverTimer);
+      if (hoverPreview?.button === button) hoverCloseTimer = setTimeout(closeHoverPreview, 180);
+    });
+    button.addEventListener('pointerdown', closeHoverPreview);
+  }
+  async function showHoverPreview(button, asset) {
+    if (!button.isConnected || selecting || drag || document.querySelector('dialog[open]')) return;
+    const node = element('aside', 'asset-hover-preview'); node.setAttribute('aria-label', `放大预览 ${asset.name}`);
+    const stage = element('div', 'hover-preview-stage');
+    const source = button.querySelector('img');
+    if (source?.complete && source.naturalWidth) { const image = source.cloneNode(); image.draggable = false; stage.append(image); }
+    else stage.append(fallback(asset.type));
+    const footer = element('div', 'hover-preview-footer');
+    const title = element('span', '', asset.name); title.title = asset.name; footer.append(title);
+    const kind = kindOf(asset), action = element('button', 'hover-preview-open', kind === 'video' || kind === 'gif' ? '播放' : '打开'); action.type = 'button';
+    action.addEventListener('click', () => { closeHoverPreview(); openDetail(asset, 0, kind === 'video' || kind === 'gif'); });
+    stage.addEventListener('click', () => { closeHoverPreview(); openDetail(asset, 0, kind === 'video' || kind === 'gif'); });
+    footer.append(action); node.append(stage, footer); document.body.append(node);
+    const controller = new AbortController(), state = { node, button, controller, urls: [] };
+    hoverPreview = state;
+    const rect = button.getBoundingClientRect(), box = node.getBoundingClientRect(), gap = 12;
+    const right = rect.right + gap, left = rect.left - gap - box.width;
+    const x = right + box.width <= innerWidth - 16 ? right : left >= 16 ? left : Math.max(16, Math.min(innerWidth - box.width - 16, rect.left));
+    const dock = $('.library-dock').getBoundingClientRect();
+    const bottom = x < dock.right && x + box.width > dock.left ? Math.min(innerHeight - 16, dock.top - gap) : innerHeight - 16;
+    if (box.height > bottom - 16) stage.style.height = `${Math.max(80, bottom - 62)}px`;
+    const height = node.getBoundingClientRect().height;
+    const y = Math.max(16, Math.min(bottom - height, rect.top + (rect.height - height) / 2));
+    node.style.left = `${x}px`; node.style.top = `${y}px`;
+    node.addEventListener('pointerenter', () => clearTimeout(hoverCloseTimer));
+    node.addEventListener('pointerleave', () => { hoverCloseTimer = setTimeout(closeHoverPreview, 180); });
+    const input = { ...catalog.config }, session = memberSession();
+    try {
+      // Avoid materializing very large complete cached videos just for a hover.
+      const video = kind === 'video';
+      if (video && !(asset.sizeMB > 0 && asset.sizeMB <= 32)) return;
+      const saved = await window.StudioPreviewCache.peek(previewKey(input, session, asset, video ? 'video' : 'image'), { signal: controller.signal, kind: video ? 'video' : 'image', limit: (video ? 32 : 20) * 1048576 });
+      if (!saved || hoverPreview !== state || !button.isConnected) return;
+      const url = URL.createObjectURL(saved.blob); state.urls.push(url);
+      const media = element(video ? 'video' : 'img'); media.src = url;
+      if (video) { media.muted = true; media.loop = true; media.preload = 'none'; media.setAttribute('playsinline', ''); }
+      else { media.alt = asset.name; media.draggable = false; }
+      stage.replaceChildren(media);
+      if (video) media.play().catch(() => {});
+    } catch { /* Cache misses and closing a hover never cause an original fetch. */ }
+  }
+  document.addEventListener('scroll', closeHoverPreview, { passive: true, capture: true });
+  addEventListener('resize', closeHoverPreview);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) closeHoverPreview(); });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape' && hoverPreview) { event.preventDefault(); closeHoverPreview(); } });
   function groupHeading(id, label, count) {
     const heading = element('h3', 'grid-group', label);
     heading.dataset.id = 'group:' + id;
@@ -1355,6 +1428,7 @@
   });
 
   function render() {
+    closeHoverPreview();
     if (drag) { renderLater = true; return; } // 拖动中不重排网格，放下后再刷新。
     renderLater = false;
     syncPresence();
@@ -1668,7 +1742,8 @@
     finally { delete link.dataset.busy; }
   }
 
-  async function openDetail(asset, direction = 0) {
+  async function openDetail(asset, direction = 0, playNow = false) {
+    closeHoverPreview();
     stopPreview();
     const controller = new AbortController(); previewRequest = controller;
     const input = { ...catalog.config }, session = memberSession();
@@ -1768,6 +1843,7 @@
           stage.replaceChildren(media); media.play().catch(() => {});
         } catch (error) { if (current()) { delete stage.dataset.playing; play.disabled = false; play.replaceChildren(icon('play'), document.createTextNode('重试')); toast(error.message); } }
       });
+      if (playNow) play.click();
     }
     try {
       if (asset.type === 'video' || asset.type === 'audio') {
@@ -1810,7 +1886,7 @@
           });
           stage.append(original);
         }
-        if (automatic) {
+        if (automatic || playNow) {
           try { await loadOriginal(); }
           catch (error) { if (current()) { offerOriginal('重试'); $('#detail-note').textContent = error.message; } }
         } else offerOriginal();

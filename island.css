@@ -197,6 +197,14 @@ body .field-help,body .dialog-intro,.member-status,.cloud-status { font-size:12p
 .upload-remove { position:absolute; right:4px; top:50%; translate:0 -50%; display:grid; place-items:center; width:32px; height:32px; padding:0; border:0; border-radius:50%; background:transparent; color:var(--muted); font-size:24px; line-height:1; cursor:pointer; }
 .upload-remove:hover,.upload-remove:focus-visible { background:var(--surface-3); color:var(--ink); }
 .upload-remove:disabled { opacity:.4; cursor:default; }
+.asset-hover-preview { position:fixed; z-index:9; width:min(440px,calc(100vw - 32px)); background:var(--float-solid); color:var(--ink); border:1px solid var(--line); box-shadow:0 16px 48px #00000026; animation:hover-preview-in 320ms var(--spring-snappy); }
+.hover-preview-stage { position:relative; height:min(300px,calc(100vh - 110px)); display:grid; place-items:center; overflow:hidden; background:var(--surface); cursor:pointer; }
+.hover-preview-stage>img,.hover-preview-stage>video { position:absolute; inset:0; display:block; width:100%; height:100%; object-fit:contain; }
+.hover-preview-footer { display:flex; align-items:center; gap:12px; min-height:44px; padding:8px 12px; }
+.hover-preview-footer>span { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+.hover-preview-open { flex-shrink:0; padding:5px 10px; border:0; background:var(--surface-2); color:var(--ink); font:inherit; font-size:12px; cursor:pointer; }
+@keyframes hover-preview-in { from { opacity:0; scale:.96; } to { opacity:1; scale:1; } }
+@media (prefers-reduced-motion:reduce) { .asset-hover-preview { animation:none; } }
 .empty-state h3 { font-size:15px; font-weight:500; }
 #selection-count,.selection-bar button { font-size:13px; }
 body .toast { font-size:13px; }
