@@ -91,6 +91,7 @@
   let cloudBusy = false;
   let cloudRequest = null;
   let uploadRequest = null;
+  let uploadItemRequest = null, activeUploadItem = null;
   let uploadQueue = [];
   let uploading = false;
   // 上传可以收起：窗口关掉、顶部留一个小胶囊显示进度，网页照常可以浏览和整理。
@@ -468,6 +469,18 @@
     $('#upload-queue').replaceChildren(...uploadQueue.map((item) => {
       const row = element('div', 'upload-row');
       row.append(element('strong', '', item.relativePath), element('span', '', item.status));
+      if (!item.done) {
+        const cancel = element('button', 'upload-remove', '×'); cancel.type = 'button';
+        cancel.setAttribute('aria-label', `取消上传 ${item.relativePath}`); cancel.title = '取消上传'; cancel.disabled = Boolean(item.canceled);
+        cancel.addEventListener('click', () => {
+          item.canceled = true;
+          if (item === activeUploadItem) { item.status = '正在取消…'; uploadItemRequest?.abort(); }
+          else uploadQueue = uploadQueue.filter(entry => entry !== item);
+          updateUploadStats(); renderQueue(); renderIsland();
+          if (!uploading) $('#upload-message').textContent = uploadQueue.some(entry => !entry.done) ? `${uploadQueue.filter(entry => !entry.done).length} 个文件待上传` : '没有待上传的文件';
+        });
+        row.append(cancel);
+      }
       return row;
     }));
     $('#upload-start').disabled = uploading || !uploadQueue.some((item) => !item.done);
@@ -476,6 +489,17 @@
     $('#choose-folder').hidden = uploading || !isOpenList();
     $('#upload-cancel').hidden = !uploading;
     $('#upload-minimize').hidden = !uploading;
+    if (uploading && uploadStats) $('#upload-message').textContent = uploadStats.total ? `正在上传 ${uploadStats.index}/${uploadStats.total}` : '正在取消上传…';
+  }
+  function updateUploadStats() {
+    if (!uploadStats) return;
+    const items = uploadStats.items.filter(item => !item.canceled || item.done);
+    Object.assign(uploadStats, {
+      total: items.length, index: items.filter(item => item.attempted).length,
+      totalBytes: items.reduce((sum, item) => sum + item.file.size, 0),
+      doneBytes: items.reduce((sum, item) => sum + (item.done ? item.file.size : 0), 0),
+      currentBytes: activeUploadItem && !activeUploadItem.canceled ? activeUploadItem.file.size : 0
+    });
   }
   // 顶部胶囊（灵动岛）：进度圈 + 第几份 + 总进度；传完变成结果，几秒后收走。点它展开上传窗口。
   function showIsland() {
@@ -568,34 +592,42 @@
     folderCache.virtualBase = uploadFolder() ? uploadFolder().split('/') : [];
     uploadTarget = uploadFolder();
     let completed = 0;
+    const batch = uploadQueue.filter(item => !item.done);
+    batch.forEach(item => { item.attempted = false; });
+    uploadStats = { items: batch, percent: 0 }; updateUploadStats();
     renderQueue();
-    const total = uploadQueue.filter(item => !item.done).length;
-    uploadStats = { total, index: 0, totalBytes: uploadQueue.filter(item => !item.done).reduce((sum, item) => sum + (item.file.size || 0), 0), doneBytes: 0, currentBytes: 0, percent: 0 };
-    let index = 0, reported = 0;
-    for (const item of uploadQueue) {
-      if (item.done || uploadRequest.signal.aborted) continue;
+    let reported = 0;
+    for (const item of batch) {
+      if (item.canceled || uploadRequest.signal.aborted) continue;
+      activeUploadItem = item; uploadItemRequest = new AbortController();
+      const signal = AbortSignal.any([uploadRequest.signal, uploadItemRequest.signal]);
       try {
-        item.status = '正在上传…'; renderQueue();
-        index++; reported = Date.now();
-        Object.assign(uploadStats, { index, currentBytes: item.file.size || 0, percent: 0 }); renderIsland();
-        presence({ action: 'upload', detail: `${index}/${total}`, folder: uploadFolder() });
+        item.attempted = true; item.status = '正在上传…'; reported = Date.now();
+        uploadStats.percent = 0; updateUploadStats(); renderQueue(); renderIsland();
+        presence({ action: 'upload', detail: `${uploadStats.index}/${uploadStats.total}`, folder: uploadTarget });
         await client.upload(settings, item.file, (percent) => {
+          if (signal.aborted || item.canceled) return;
           item.status = `${percent}% · 正在上传`; renderQueue();
           uploadStats.percent = percent; renderIsland();
-          if (Date.now() - reported > 30000) { reported = Date.now(); presence({ detail: `${index}/${total} ${percent}%` }); }
-        }, uploadRequest.signal, session, item.relativePath, folderCache);
+          if (Date.now() - reported > 30000) { reported = Date.now(); presence({ detail: `${uploadStats.index}/${uploadStats.total} ${percent}%` }); }
+        }, signal, session, item.relativePath, folderCache);
+        // A confirmed successful save wins a cancellation arriving at the same instant.
+        item.canceled = false;
         item.done = true; item.status = '上传成功'; completed++;
-        uploadStats.doneBytes += item.file.size || 0; uploadStats.percent = 0; uploadStats.currentBytes = 0;
-      } catch (error) { item.status = error.message; if ([1000, 2000, 401].includes(error.code)) auth.logout(); }
-      renderQueue();
+      } catch (error) {
+        if (item.canceled) uploadQueue = uploadQueue.filter(entry => entry !== item);
+        else { item.status = uploadRequest.signal.aborted ? '已停止上传' : error.message; if ([1000, 2000, 401].includes(error.code)) auth.logout(); }
+      } finally { activeUploadItem = null; uploadItemRequest = null; uploadStats.percent = 0; }
+      updateUploadStats(); renderQueue(); renderIsland();
     }
     const canceled = uploadRequest.signal.aborted;
+    const skipped = batch.filter(item => item.canceled).length;
+    const failed = batch.filter(item => !item.done && !item.canceled).length;
     presence({ action: '', detail: '' });
     uploading = false; uploadTarget = null;
     // 收起着传完：胶囊变成结果，成功 4 秒后收走，有失败的留 10 秒，点它可以看明细。
     if (uploadMinimized) {
-      const failed = total - completed;
-      const text = canceled ? `已停止上传，完成 ${completed} 个` : failed ? `完成 ${completed} 个，${failed} 个未成功` : `已上传 ${completed} 个文件`;
+      const text = canceled ? `已停止上传，完成 ${completed} 个` : failed ? `完成 ${completed} 个，${failed} 个未成功` : `已上传 ${completed} 个文件${skipped ? `，取消 ${skipped} 个` : ''}`;
       showIsland(); renderIsland({ text, failed: failed > 0 || canceled });
       islandTimer = setTimeout(hideIsland, failed || canceled ? 10000 : 4000);
     }
@@ -603,7 +635,7 @@
     uploadRequest = null;
     renderQueue();
     await refreshCloud();
-    $('#upload-message').textContent = canceled ? '已停止上传，已完成的文件会保留。' : !completed ? '没有文件上传成功，请看上面的提示。' : `已上传 ${completed} 个文件${cloudAssets.length <= previousCount ? '，目录稍后刷新可见，不用重复上传。' : '。'}`;
+    $('#upload-message').textContent = canceled ? '已停止上传，已完成的文件会保留。' : !completed ? (skipped && !failed ? `已取消 ${skipped} 个文件` : '没有文件上传成功，请看上面的提示。') : `已上传 ${completed} 个文件${skipped ? `，取消 ${skipped} 个` : ''}${cloudAssets.length <= previousCount ? '，目录稍后刷新可见，不用重复上传。' : '。'}`;
   });
   $('#upload-cancel').addEventListener('click', () => uploadRequest?.abort());
   $('#upload-dialog').addEventListener('cancel', (event) => { if (uploading) { event.preventDefault(); minimizeUpload(); } });

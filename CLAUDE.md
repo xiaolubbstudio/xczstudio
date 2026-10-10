@@ -80,6 +80,8 @@
 
 ## 接着开发怎么做
 
+- 2026-10-11 上传队列：未完成的文件右侧有取消叉号，等待中的直接移出，当前文件使用独立 AbortController 取消，其他文件继续；“停止上传”仍取消整批。单项取消同步扣除胶囊总数量和字节，成功文件无叉号，不撤销已确认的云盘原件。`/?demo&upload-test` 用隔离模拟上传检查队列，不发送真实文件。
+
 - 用户偏好直接做、少反复确认、减少重复自检提高速度。按改动范围验证即可；涉及真实上传，用实际目录和下载内容确认，不能只看接口 200。
 - **当前用户 AGENTS 约定：独立 worktree 修改、验证后提交同步并确认线上部署，无需逐次询问。** 网站在当前 worktree，后台在独立后台 worktree，源项目只作历史和私有资料定位。提交并推送各仓库 main（先获取远端改动，不强推）；后台 `npm run deploy` 使用 `STUDIO_WEBSITE_DIR` 指向当前网站 worktree，其脚本检查隔离并打包 `/studio/`（新增网站文件要加进 `scripts/studio-package-website.mjs` 白名单）。确认线上版本，不成功就如实说明。
 - 本地预览：PowerShell 设置 `$env:PORT=4182; $env:NODE_USE_ENV_PROXY=1; $env:HTTPS_PROXY='http://127.0.0.1:7897'`，再运行 `node scripts/serve.cjs`（`.claude/launch.json` 已配好）。预览会把 `/api` 转发到线上后台，可用真实账号登录查看；`workers.dev` 在国内需走代理。`/?demo`（加 `&light` 看白天模式）用演示素材看排版，不连后台。

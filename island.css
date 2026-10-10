@@ -193,6 +193,10 @@ body .field-help,body .dialog-intro,.member-status,.cloud-status { font-size:12p
 .detail-meta { font-size:13px; }
 #detail-position { font-size:12px; }
 .upload-row span { font-size:12px; }
+.upload-row { position:relative; padding-right:44px!important; }
+.upload-remove { position:absolute; right:4px; top:50%; translate:0 -50%; display:grid; place-items:center; width:32px; height:32px; padding:0; border:0; border-radius:50%; background:transparent; color:var(--muted); font-size:24px; line-height:1; cursor:pointer; }
+.upload-remove:hover,.upload-remove:focus-visible { background:var(--surface-3); color:var(--ink); }
+.upload-remove:disabled { opacity:.4; cursor:default; }
 .empty-state h3 { font-size:15px; font-weight:500; }
 #selection-count,.selection-bar button { font-size:13px; }
 body .toast { font-size:13px; }

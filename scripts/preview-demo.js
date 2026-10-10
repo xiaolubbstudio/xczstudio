@@ -19,6 +19,26 @@
   if (new URLSearchParams(location.search).has('many')) { const base = names.slice(); for (let k = 1; k < 25; k++) base.forEach(([n, ...rest]) => names.push([n.replace(/(.[^.]+)$/, '-' + k + '$1'), ...rest])); }
   const assets = names.map(([name, folder], i) => ({ id: 'demo-' + i, name, folder, size: Math.round((1.3 + i * 2.7) * 1048576), modified: `2026-09-${String(30 - i).padStart(2, '0')}T10:00:00Z`, added_ms: Date.UTC(2026,9,11,10,0,0) - i * 60000, deleted: false, pending: false, revision: 1, thumb: '', uploader: 'angel_ni' }));
   const favorites = new Set(['demo-1']);
+  // /?demo&upload-test exercises queue cancellation without uploading real files.
+  if (new URLSearchParams(location.search).has('upload-test')) addEventListener('load', () => {
+    const log = document.createElement('pre'); log.id = 'upload-test-log'; log.hidden = true; document.body.append(log);
+    const record = text => { log.textContent += text + '\n'; };
+    window.OpenListClient.upload = async (settings, file, progress, signal) => {
+      signal.throwIfAborted(); record('start:' + file.name);
+      await new Promise((resolve, reject) => {
+        let percent = 0;
+        const abort = () => { clearInterval(timer); signal.removeEventListener('abort', abort); record('cancel:' + file.name); reject(signal.reason); };
+        const timer = setInterval(() => {
+          percent += file.name.startsWith('current') ? 1 : 10; progress(Math.min(percent, 100));
+          if (percent >= 100) { clearInterval(timer); signal.removeEventListener('abort', abort); resolve(); }
+        }, 150);
+        signal.addEventListener('abort', abort, { once:true });
+      });
+      record('saved:' + file.name);
+      assets.push({ id:'upload-' + assets.length, name:file.name, folder:'', size:file.size, modified:new Date().toISOString(), added_ms:Date.now(), revision:1, thumb:'' });
+      return { name:file.name, size:file.size };
+    };
+  });
   // Fault injection goes through the real thumbnail loader, not the decorative demo images.
   const previewTest = new URLSearchParams(location.search).get('preview-test');
   let previewRecovered = previewTest !== 'retry';
