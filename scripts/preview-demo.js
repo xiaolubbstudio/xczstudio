@@ -18,12 +18,27 @@
   if (new URLSearchParams(location.search).has('many')) { const base = names.slice(); for (let k = 1; k < 25; k++) base.forEach(([n, ...rest]) => names.push([n.replace(/(.[^.]+)$/, '-' + k + '$1'), ...rest])); }
   const assets = names.map(([name, folder], i) => ({ id: 'demo-' + i, name, folder, size: Math.round((1.3 + i * 2.7) * 1048576), modified: `2026-09-${String(30 - i).padStart(2, '0')}T10:00:00Z`, deleted: false, pending: false, revision: 1, thumb: '', uploader: 'angel_ni' }));
   const favorites = new Set(['demo-1']);
+  // Fault injection goes through the real thumbnail loader, not the decorative demo images.
+  const previewTest = new URLSearchParams(location.search).get('preview-test');
+  let previewRecovered = previewTest !== 'retry';
+  if (previewTest) assets.forEach((asset, i) => {
+    asset.modified += '-' + previewTest;
+    if (names[i][2]) asset.thumb = 'https://preview.example.test/expired/' + i;
+  });
   const original = window.fetch.bind(window);
   window.fetch = async (url, options) => {
+    if (previewTest && new URL(url, location.href).hostname === 'preview.example.test') {
+      const requested = new URL(url).pathname;
+      const index = Number(requested.split('/').at(-1));
+      if (!previewRecovered || requested.includes('/expired/')) return new Response('expired', { status: 403 });
+      return new Response(decodeURIComponent(art(names[index]).split(',').slice(1).join(',')), { headers: { 'Content-Type': 'image/svg+xml' } });
+    }
     const path = new URL(url, location.href).pathname;
     if (!path.startsWith('/api/')) return original(url, options);
     // 移动、排序、收藏在这次页面里记住，刷新目录后还在。
     const body = (() => { try { return JSON.parse(options?.body || '{}'); } catch { return {}; } })();
+    if (previewTest && path.endsWith('/list') && body.refresh) previewRecovered = true;
+    if (previewTest && path.endsWith('/resolve') && body.preview) return new Response(JSON.stringify({ code: 200, data: { preview_url: 'https://preview.example.test/fresh/' + body.id.split('-').at(-1) } }), { headers: { 'Content-Type': 'application/json' } });
     if (path.endsWith('/move')) assets.forEach(item => { if (body.ids.includes(item.id) && item.folder !== body.folder) { item.folder = body.folder; item.sort_order = null; } });
     if (path.endsWith('/order')) body.ids.forEach((id, index) => { assets.find(item => item.id === id).sort_order = index; });
     if (path.endsWith('/favorite')) body.ids.forEach(id => { favorites.delete(id); if (body.on) favorites.add(id); });
@@ -56,7 +71,7 @@
       : `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${hue} 70% 62%)"/><stop offset="1" stop-color="hsl(${hue + 40} 60% 22%)"/></linearGradient></defs><rect width="${w}" height="${h}" fill="url(#g)"/><circle cx="${w * .7}" cy="${h * .35}" r="${Math.min(w, h) * .16}" fill="hsl(${hue + 20} 90% 80%)" opacity=".8"/><path d="M0 ${h * .78} Q${w * .3} ${h * .6} ${w * .55} ${h * .74} T${w} ${h * .7} V${h} H0Z" fill="hsl(${hue + 60} 40% 14%)" opacity=".85"/>`;
     return 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${body}</svg>`);
   };
-  new MutationObserver(() => {
+  if (!previewTest) new MutationObserver(() => {
     document.querySelectorAll('.asset-card:not(.folder-card) .preview-button:not([data-demo])').forEach(button => {
       button.dataset.demo = '1';
       const spec = names[Number(button.closest('.asset-card').dataset.id.split('-')[1])];

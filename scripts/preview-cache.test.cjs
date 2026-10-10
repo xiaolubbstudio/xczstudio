@@ -16,6 +16,37 @@ function browser(entries = new Map(), fetcher) {
   return { api: w.StudioPreviewCache, entries };
 }
 const options = { limit: 1048576, kind: 'video' };
+test('expired preview links renew once; cached bytes need neither the stale URL nor another backend request', async () => {
+  let downloads = 0, renewals = 0;
+  const b = browser(new Map(), async url => {
+    downloads++;
+    return url.endsWith('/expired') ? new Response('expired', { status: 403 }) : new Response('image bytes', { headers: { 'Content-Type': 'image/png' } });
+  });
+  const opts = { limit: 1024, kind: 'image', refreshUrl: async () => { renewals++; return 'https://cdn.test/fresh'; } };
+  const first = await b.api.load(['renewable'], () => 'https://cdn.test/expired', opts);
+  assert.equal(first.cached, false); assert.equal(downloads, 2); assert.equal(renewals, 1);
+  const next = await b.api.load(['renewable'], () => { throw Error('cache must skip URL resolution'); }, opts);
+  assert.equal(next.cached, true); assert.equal(downloads, 2); assert.equal(renewals, 1);
+});
+test('failed renewals stop after one attempt and do not poison a later refresh', async () => {
+  let available = false, downloads = 0, renewals = 0;
+  const b = browser(new Map(), async () => {
+    downloads++;
+    return available ? new Response('image', { headers: { 'Content-Type': 'image/png' } }) : new Response('unavailable', { status: 503 });
+  });
+  const opts = { limit: 1024, kind: 'image', refreshUrl: () => { renewals++; return 'https://cdn.test/fresh'; } };
+  await assert.rejects(b.api.load(['retryable'], () => 'https://cdn.test/expired', opts));
+  assert.equal(downloads, 2); assert.equal(renewals, 1); assert.equal(b.entries.size, 0);
+  available = true;
+  assert.equal((await b.api.load(['retryable'], () => 'https://cdn.test/fresh', opts)).cached, false);
+  assert.equal(downloads, 3); assert.equal(renewals, 1);
+});
+test('cancelling a thumbnail never starts link renewal', async () => {
+  const controller = new AbortController();
+  const b = browser(new Map(), async () => { controller.abort(); throw Error('network interrupted'); });
+  await assert.rejects(b.api.load(['cancelled-thumb'], () => 'https://cdn.test/thumb', { signal: controller.signal, kind: 'image', limit: 1024, refreshUrl: () => { throw Error('must not renew'); } }));
+  assert.equal(b.entries.size, 0);
+});
 test('binary cloud thumbnails are identified by PNG, JPEG, GIF and WebP signatures and cached as images', async () => {
   for (const [signature, type] of [
     [[0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a], 'image/png'],

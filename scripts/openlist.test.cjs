@@ -14,6 +14,21 @@ function browser(fetch, persistent = new Map()) {
   return scope;
 }
 const response = (data, code = 200) => ({ ok: code === 200, status: code, json: async () => ({ code, data }) });
+test('thumbnail renewal uses the authenticated catalog and validates returned media addresses', async () => {
+  let result = 'https://cdn.example.test/fresh.jpg';
+  const b = browser(async (url, options) => {
+    assert.equal(url, input.folderUrl.slice(0, -1) + '/api/fs/studio_catalog/resolve');
+    assert.equal(options.headers.Authorization, 'preview-fixture-token');
+    assert.deepEqual(JSON.parse(options.body), { id: 'asset-1', preview: true, path: '/' });
+    return response({ preview_url: result });
+  });
+  b.localStorage.setItem('studio-openlist-session-v1', JSON.stringify({ endpoint: input.folderUrl.slice(0, -1), folderPath: '/', username: 'reader', role: 0, token: 'preview-fixture-token', created: Date.now(), expires: Date.now() + 60000 }));
+  const asset = { id: 'asset-1', managed: true };
+  assert.equal(await b.OpenListClient.resolvePreview(input, asset), result);
+  result = ''; assert.equal(await b.OpenListClient.resolvePreview(input, asset), '');
+  result = 'https://cdn.example.test/file?token=private';
+  await assert.rejects(b.OpenListClient.resolvePreview(input, asset), /不安全/);
+});
 
 test('remembered username is scoped to the connection; persistence saves a session but never a password', async () => {
   const b = browser(async url => response(url.endsWith('/login') ? { token: 'fixture-private-token' } : { username: 'member01', role: 0 }));

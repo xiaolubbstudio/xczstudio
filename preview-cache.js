@@ -40,7 +40,7 @@
     };
     const result = writes.then(save); writes = result.catch(() => {}); return result;
   }
-  async function load(parts, resolveUrl, { signal, limit, kind, onProgress }) {
+  async function load(parts, resolveUrl, { signal, limit, kind, onProgress, refreshUrl }) {
     check(signal);
     const id = await key(parts), cache = await store();
     await writes; check(signal); // 等待已完成下载的缓存写入，避免快速重开时重复下载。
@@ -54,38 +54,49 @@
       check(signal); return { blob: hit, cached: true, persistent };
     }
     // 命中缓存时不调用 resolveUrl，因此不会重新请求后台或临时直链。
-    const url = await resolveUrl(); check(signal);
-    if (!url) throw new Error('尚无预览');
-    const response = await root.fetch(url, { signal, credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'default' });
-    let type = (response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
-    // Some cloud thumbnails are real images labeled as generic binary data.
-    // Only accept them after checking their file signature, never by filename.
-    const inspectImage = kind === 'image' && ['', 'application/octet-stream', 'binary/octet-stream'].includes(type);
-    if (response.status !== 200 || (!type.startsWith(kind + '/') && !inspectImage) || Number(response.headers.get('Content-Length') || 0) > limit) {
-      await response.body?.cancel(); throw new Error('预览不可用或超过预览大小限制');
+    let blob;
+    try { blob = await download(await resolveUrl()); }
+    catch (error) {
+      check(signal);
+      if (!refreshUrl) throw error;
+      // One fresh link attempt, only on a cache miss and a failed download. Never poll.
+      blob = await download(await refreshUrl());
     }
-    const reader = response.body.getReader(), chunks = []; let size = 0;
-    const total = Number(response.headers.get('Content-Length') || 0);
-    try {
-      for (;;) {
-        check(signal); const next = await reader.read(); if (next.done) break;
-        size += next.value.byteLength;
-        if (size > limit) throw new Error('预览超过大小限制，已停止加载');
-        chunks.push(next.value);
-        onProgress?.(size, total);
-      }
-    } finally { await reader.cancel().catch(() => {}); }
-    check(signal);
-    if (total && total !== size) throw new Error('预览下载未完成，请重试');
-    if (inspectImage) {
-      const header = new Uint8Array(await new Blob(chunks).slice(0, 12).arrayBuffer());
-      type = imageType(header);
-      if (!type) throw new Error('预览返回的内容不是可识别的图片');
-    }
-    const blob = new Blob(chunks, { type });
-    if (!blob.size) throw new Error('预览文件为空');
     const persistent = await remember(cache, id, blob);
     check(signal); return { blob, cached: false, persistent };
+    async function download(url) {
+      check(signal);
+      if (!url) { const error = new Error('尚无预览'); error.code = 'NO_PREVIEW'; throw error; }
+      const response = await root.fetch(url, { signal, credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'default' });
+      let type = (response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+      // Some cloud thumbnails are real images labeled as generic binary data.
+      // Only accept them after checking their file signature, never by filename.
+      const inspectImage = kind === 'image' && ['', 'application/octet-stream', 'binary/octet-stream'].includes(type);
+      if (response.status !== 200 || (!type.startsWith(kind + '/') && !inspectImage) || Number(response.headers.get('Content-Length') || 0) > limit) {
+        await response.body?.cancel(); throw new Error('预览不可用或超过预览大小限制');
+      }
+      const reader = response.body.getReader(), chunks = []; let size = 0;
+      const total = Number(response.headers.get('Content-Length') || 0);
+      try {
+        for (;;) {
+          check(signal); const next = await reader.read(); if (next.done) break;
+          size += next.value.byteLength;
+          if (size > limit) throw new Error('预览超过大小限制，已停止加载');
+          chunks.push(next.value);
+          onProgress?.(size, total);
+        }
+      } finally { await reader.cancel().catch(() => {}); }
+      check(signal);
+      if (total && total !== size) throw new Error('预览下载未完成，请重试');
+      if (inspectImage) {
+        const header = new Uint8Array(await new Blob(chunks).slice(0, 12).arrayBuffer());
+        type = imageType(header);
+        if (!type) throw new Error('预览返回的内容不是可识别的图片');
+      }
+      const blob = new Blob(chunks, { type });
+      if (!blob.size) throw new Error('预览文件为空');
+      return blob;
+    }
   }
   const api = { key, load };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

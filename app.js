@@ -136,7 +136,7 @@
   const isCloud = () => Boolean(catalog.config.folderUrl);
   const allAssets = () => (isCloud() ? cloudAssets : catalog.assets).filter(asset => activeType === 'trash' ? asset.deleted : !asset.deleted);
 
-  // 卡片只读目录已有的缩略图地址，不解析原文件；跨筛选复用进行中的加载。
+  // 优先复用预览字节；目录中的临时缩略图失败时只补取一次新地址。
   let thumbnailObserver = null;
   let thumbnailScope = '';
   let thumbnailController = new AbortController();
@@ -175,17 +175,23 @@
     for (const [id, item] of thumbnails) if (!valid.has(id)) { if (item.url) URL.revokeObjectURL(item.url); thumbnails.delete(id); }
     async function show(button) {
       const asset = assets.get(button.closest('.asset-card').dataset.id);
-      if (!asset || asset.deleted || asset.pending || (!asset.previewUrl && !asset.cachedPreview) || asset.type === 'audio' || asset.type === 'other' || (asset.provider === 'openlist' && !session)) return;
+      if (!asset || asset.deleted || asset.pending || (!asset.previewUrl && !asset.cachedPreview && !(asset.provider === 'openlist' && asset.managed)) || asset.type === 'audio' || asset.type === 'other' || (asset.provider === 'openlist' && !session)) return;
       // 演示视频的 previewUrl 可能是视频本身，不能作为自动缩略图加载。
       if (!asset.cloud && !['image', 'animation'].includes(asset.type)) return;
       const parts = previewKey(input, session, asset, asset.type === 'video' ? 'poster' : 'thumbnail');
       const id = JSON.stringify(parts);
       let item = thumbnails.get(id);
+      if (item && !item.url && item.source !== asset.previewUrl) { thumbnails.delete(id); item = null; }
       if (!item) {
-        item = {}; thumbnails.set(id, item);
-        item.promise = window.StudioPreviewCache.load(parts, () => safeUrl(asset.previewUrl), { signal, kind: 'image', limit: 4 * 1048576 })
+        item = { source: asset.previewUrl }; thumbnails.set(id, item);
+        const loadSignal = AbortSignal.any([signal, AbortSignal.timeout(25000)]);
+        const refreshUrl = asset.provider === 'openlist' && asset.managed ? () => window.OpenListClient.resolvePreview(input, asset, loadSignal) : undefined;
+        item.promise = window.StudioPreviewCache.load(parts, () => safeUrl(asset.previewUrl), { signal: loadSignal, kind: 'image', limit: 4 * 1048576, refreshUrl })
           .then(result => { if (signal.aborted || thumbnails.get(id) !== item) return ''; item.url = URL.createObjectURL(result.blob); return item.url; })
-          .catch(() => { if (!asset.previewUrl && thumbnails.get(id) === item) thumbnails.delete(id); return ''; }); // 上次目录没有预览地址时，等新目录到达再取。
+          .catch(error => {
+            if (error.code !== 'NO_PREVIEW' && !signal.aborted && thumbnails.get(id) === item && !cloudBusy && !$('#cloud-status').textContent) cloudStatus('部分预览未能加载，点击刷新重试。');
+            return '';
+          });
       }
       const url = await item.promise;
       if (!url || signal.aborted || !button.isConnected) return;
@@ -277,6 +283,8 @@
     try {
       const data = await cloudClient().list(catalog.config, controller.signal, notify);
       if (cloudRequest !== controller) return;
+      // Explicit refresh also retries failed/timed-out previews. Cached image bytes stay intact.
+      if (notify) clearThumbnails();
       cloudAssets = data.assets;
       cloudFolders = data.folders || [];
       cloudFolderId = data.folderId;
@@ -288,7 +296,7 @@
         syncFollowUp = setTimeout(() => { if (!cloudBusy && !uploading && !document.hidden) refreshCloud(); }, 8000);
       }
       cloudStatus('');
-      if (notify) toast('已更新');
+      if (notify) toast('目录已更新');
       await refreshMember(isOpenList() && memberSession()?.token === listSession?.token ? data.access : undefined);
       migrateLocalFavorites();
     } catch (error) {

@@ -124,6 +124,11 @@
     return url;
   }
   function downloadUrl() { return '#'; }
+  async function resolvePreview(input, asset, signal) {
+    if (!asset.managed) return mediaUrl(asset.previewUrl, input);
+    const data = await manage(input, 'resolve', { id: asset.id, preview: true }, signal);
+    return mediaUrl(data?.preview_url, input);
+  }
   function uploadLocation(input, file, relativePath = file?.webkitRelativePath || file?.name) {
     const base = config(input).folderPath;
     if (typeof relativePath !== 'string' || relativePath.includes('\\')) throw new Error('上传目录路径无效。');
@@ -187,7 +192,7 @@
     progress?.(100);
     return result;
   }
-  const api = { config, request, mediaUrl, list, manage, directory, profile, memberAccess, resolve, downloadUrl, uploadLocation, upload };
+  const api = { config, request, mediaUrl, list, manage, directory, profile, memberAccess, resolve, resolvePreview, downloadUrl, uploadLocation, upload };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.OpenListClient = api;
 })(typeof window === 'undefined' ? globalThis : window);
