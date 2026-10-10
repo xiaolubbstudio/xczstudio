@@ -44,6 +44,8 @@
 !/docs/Google-Drive接入.md
 
 !/motion.js
+!/folder-preview.js
+!/scripts/folder-preview.test.cjs
 !/motion.css
 !/assets/studio-face.png
 !/assets/ui-icons.svg

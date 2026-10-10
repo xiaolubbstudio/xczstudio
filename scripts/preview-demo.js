@@ -16,6 +16,9 @@
     ['表情 01.png', '表情包', 500, 500, 1, 30], ['片头.mp4', '开场', 1920, 1080, 0, 20]];
   if (new URLSearchParams(location.search).has('organized')) names.forEach((entry, i) => { entry[1] ||= i % 2 ? '表情包' : '开场'; });
   if (new URLSearchParams(location.search).has('long-path')) names[1][1] = '图片素材分类和常用表情/比较长的文件夹名称用于手机换行检查';
+  if (new URLSearchParams(location.search).has('folder-test')) {
+    ['z.png','a.png','Z.png','9.png','A.png','0.png','A9.png','A0.png','Aa.png','AZ.png','中文图片.png'].forEach((name, index) => names.push([name,'排序检查',160,120,0,index*25]));
+  }
   // /?demo&many 复制出 400 多份素材，用来测滚动性能。
   if (new URLSearchParams(location.search).has('many')) { const base = names.slice(); for (let k = 1; k < 25; k++) base.forEach(([n, ...rest]) => names.push([n.replace(/(.[^.]+)$/, '-' + k + '$1'), ...rest])); }
   const assets = names.map(([name, folder], i) => ({ id: 'demo-' + i, name, folder, size: Math.round((1.3 + i * 2.7) * 1048576), modified: `2026-09-${String(30 - i).padStart(2, '0')}T10:00:00Z`, added_ms: Date.UTC(2026,9,11,10,0,0) - i * 60000, deleted: false, pending: false, revision: 1, thumb: '', uploader: 'angel_ni' }));
@@ -137,6 +140,11 @@
     if (hoverTest) hoverCounts.api++;
     // 移动、排序、收藏在这次页面里记住，刷新目录后还在。
     const body = (() => { try { return JSON.parse(options?.body || '{}'); } catch { return {}; } })();
+    if (new URLSearchParams(location.search).has('folder-test') && path.endsWith('/resolve') && !body.preview) {
+      const log = document.querySelector('#folder-download-log') || document.body.appendChild(Object.assign(document.createElement('pre'),{id:'folder-download-log',hidden:true}));
+      log.textContent += body.id + '\n';
+      return new Response(JSON.stringify({code:200,data:{raw_url:location.origin+'/assets/orange.svg'}}), {headers:{'Content-Type':'application/json'}});
+    }
     if (previewTest && path.endsWith('/list') && body.refresh) previewRecovered = true;
     if (previewTest && path.endsWith('/resolve') && body.preview) return new Response(JSON.stringify({ code: 200, data: { preview_url: 'https://preview.example.test/fresh/' + body.id.split('-').at(-1) } }), { headers: { 'Content-Type': 'application/json' } });
     if (path.endsWith('/move')) assets.forEach(item => { if (body.ids.includes(item.id) && item.folder !== body.folder) { item.folder = body.folder; item.sort_order = null; } });
@@ -173,9 +181,9 @@
     return 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${body}</svg>`);
   };
   if (!previewTest) new MutationObserver(() => {
-    document.querySelectorAll('.asset-card:not(.folder-card) .preview-button:not([data-demo])').forEach(button => {
+    document.querySelectorAll('.asset-card:not(.folder-card) .preview-button:not([data-demo]),.folder-peek-thumb:not([data-demo])').forEach(button => {
       button.dataset.demo = '1';
-      const spec = names[Number(button.closest('.asset-card').dataset.id.split('-')[1])];
+      const spec = names[Number(button.closest('.asset-card,.folder-peek-row').dataset.id.split('-')[1])];
       if (!spec?.[2]) return;
       const image = document.createElement('img'); image.src = art(spec); image.alt = '';
       button.querySelector('.preview-fallback')?.remove(); button.prepend(image);

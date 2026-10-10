@@ -218,53 +218,55 @@
   }
   function clearThumbnails() {
     closeHoverPreview();
+    window.StudioFolders.close();
     thumbnailObserver?.disconnect(); thumbnailObserver = null;
     thumbnailController.abort(); thumbnailController = new AbortController();
     for (const item of thumbnails.values()) if (item.url) URL.revokeObjectURL(item.url);
     thumbnails.clear(); thumbnailScope = '';
+  }
+  async function showThumbnail(button, asset) {
+    const input = { ...catalog.config }, session = memberSession();
+    const signal = thumbnailController.signal;
+    if (!asset || asset.deleted || asset.pending || (!asset.previewUrl && !asset.cachedPreview && !(asset.provider === 'openlist' && asset.managed)) || asset.type === 'audio' || asset.type === 'other' || (asset.provider === 'openlist' && !session)) return;
+    // 演示视频的 previewUrl 可能是视频本身，不能作为自动缩略图加载。
+    if (!asset.cloud && !['image', 'animation'].includes(asset.type)) return;
+    const parts = previewKey(input, session, asset, asset.type === 'video' ? 'poster' : 'thumbnail');
+    const id = JSON.stringify(parts);
+    let item = thumbnails.get(id);
+    if (item && !item.url && item.source !== asset.previewUrl) { thumbnails.delete(id); item = null; }
+    if (!item) {
+      item = { source: asset.previewUrl }; thumbnails.set(id, item);
+      const loadSignal = AbortSignal.any([signal, AbortSignal.timeout(25000)]);
+      const refreshUrl = asset.provider === 'openlist' && asset.managed ? () => window.OpenListClient.resolvePreview(input, asset, loadSignal) : undefined;
+      item.promise = window.StudioPreviewCache.load(parts, () => safeUrl(asset.previewUrl), { signal: loadSignal, kind: 'image', limit: 4 * 1048576, refreshUrl })
+        .then(result => { if (signal.aborted || thumbnails.get(id) !== item) return ''; item.url = URL.createObjectURL(result.blob); return item.url; })
+        .catch(error => {
+          if (error.code !== 'NO_PREVIEW' && !signal.aborted && thumbnails.get(id) === item && !cloudBusy && !$('#cloud-status').textContent) cloudStatus('部分预览未能加载，点击刷新重试。');
+          return '';
+        });
+    }
+    const url = await item.promise;
+    if (!url || signal.aborted || !button.isConnected) return;
+    const image = element('img'); image.src = url; image.alt = asset.name; image.decoding = 'async'; image.draggable = false;
+    if (item.surface) button.dataset.surface = item.surface;
+    image.addEventListener('load', () => {
+      if (signal.aborted || !button.isConnected) return;
+      button.querySelector('.preview-fallback')?.remove();
+      item.surface ||= asset.type === 'video' ? 'opaque' : imageSurface(image);
+      button.dataset.surface = item.surface;
+    }, { once: true });
+    image.addEventListener('error', () => image.remove(), { once: true });
+    button.prepend(image);
   }
   function observeThumbnails() {
     thumbnailObserver?.disconnect();
     const input = { ...catalog.config }, session = memberSession();
     const scope = JSON.stringify([input.provider, input.folderUrl, input.folderPath, session?.username || session?.uid || 'public', session?.created]);
     if (scope !== thumbnailScope) { clearThumbnails(); thumbnailScope = scope; }
-    const signal = thumbnailController.signal;
     const assets = new Map(allAssets().map(asset => [asset.id, asset]));
     const valid = new Set([...assets.values()].map(asset => JSON.stringify(previewKey(input, session, asset, asset.type === 'video' ? 'poster' : 'thumbnail'))));
     for (const [id, item] of thumbnails) if (!valid.has(id)) { if (item.url) URL.revokeObjectURL(item.url); thumbnails.delete(id); }
-    async function show(button) {
-      const asset = assets.get(button.closest('.asset-card').dataset.id);
-      if (!asset || asset.deleted || asset.pending || (!asset.previewUrl && !asset.cachedPreview && !(asset.provider === 'openlist' && asset.managed)) || asset.type === 'audio' || asset.type === 'other' || (asset.provider === 'openlist' && !session)) return;
-      // 演示视频的 previewUrl 可能是视频本身，不能作为自动缩略图加载。
-      if (!asset.cloud && !['image', 'animation'].includes(asset.type)) return;
-      const parts = previewKey(input, session, asset, asset.type === 'video' ? 'poster' : 'thumbnail');
-      const id = JSON.stringify(parts);
-      let item = thumbnails.get(id);
-      if (item && !item.url && item.source !== asset.previewUrl) { thumbnails.delete(id); item = null; }
-      if (!item) {
-        item = { source: asset.previewUrl }; thumbnails.set(id, item);
-        const loadSignal = AbortSignal.any([signal, AbortSignal.timeout(25000)]);
-        const refreshUrl = asset.provider === 'openlist' && asset.managed ? () => window.OpenListClient.resolvePreview(input, asset, loadSignal) : undefined;
-        item.promise = window.StudioPreviewCache.load(parts, () => safeUrl(asset.previewUrl), { signal: loadSignal, kind: 'image', limit: 4 * 1048576, refreshUrl })
-          .then(result => { if (signal.aborted || thumbnails.get(id) !== item) return ''; item.url = URL.createObjectURL(result.blob); return item.url; })
-          .catch(error => {
-            if (error.code !== 'NO_PREVIEW' && !signal.aborted && thumbnails.get(id) === item && !cloudBusy && !$('#cloud-status').textContent) cloudStatus('部分预览未能加载，点击刷新重试。');
-            return '';
-          });
-      }
-      const url = await item.promise;
-      if (!url || signal.aborted || !button.isConnected) return;
-      const image = element('img'); image.src = url; image.alt = asset.name; image.decoding = 'async'; image.draggable = false;
-      if (item.surface) button.dataset.surface = item.surface;
-      image.addEventListener('load', () => {
-        if (signal.aborted || !button.isConnected) return;
-        button.querySelector('.preview-fallback')?.remove();
-        item.surface ||= asset.type === 'video' ? 'opaque' : imageSurface(image);
-        button.dataset.surface = item.surface;
-      }, { once: true });
-      image.addEventListener('error', () => image.remove(), { once: true });
-      button.prepend(image);
-    }
+    const show = button => showThumbnail(button, assets.get(button.closest('.asset-card').dataset.id));
     const buttons = $('#asset-grid').querySelectorAll('.preview-button');
     if ('IntersectionObserver' in window) {
       thumbnailObserver = new IntersectionObserver(entries => {
@@ -974,6 +976,7 @@
   const canReorder = d => d.ids.length === 1 && activeType === 'all' && Boolean(currentFolder) && !$('#search-input').value.trim();
   function liftCard(x, y) {
     closeHoverPreview();
+    window.StudioFolders.close();
     const { card, asset, pointer, type } = press; cancelPress();
     if (!card.isConnected) return;
     if (manageBusy) { toast('请先等待当前操作完成。'); return; }
@@ -1204,6 +1207,20 @@
     content.append(titleRow, meta);
     card.append(open, content);
     dropTarget(card, path);
+    window.StudioFolders.bind(card, open, {
+      name, allowed: () => !selecting && !drag && !document.querySelector('dialog[open]'),
+      assets: () => allAssets().filter(asset => !asset.deleted && !asset.pending && within(folderOf(asset), path)),
+      beforeOpen: closeHoverPreview,
+      canDownload: () => !viewOnly(), download: downloadLink,
+      thumb: asset => {
+        const thumb = element('span'); thumb.append(fallback(asset.type));
+        const kind = kindOf(asset);
+        if (kind === 'gif' || kind === 'video') thumb.append(element('span', 'folder-peek-badge', kind === 'gif' ? 'GIF' : '视频'));
+        return thumb;
+      },
+      loadThumb: showThumbnail,
+      caption: asset => `${asset.name.split('.').at(-1).toUpperCase()} · ${fileSize(asset)}`,
+    });
     return card;
   }
 
@@ -1420,6 +1437,7 @@
   }
   function setFoldersOpen(open) {
     if (foldersOpen === open) return;
+    window.StudioFolders.close();
     foldersOpen = open;
     const grid = $('#asset-grid');
     grid.querySelector('.folder-toggle button')?.setAttribute('aria-expanded', String(open));
@@ -1487,6 +1505,7 @@
   function render() {
     renderStorage();
     closeHoverPreview();
+    window.StudioFolders.close();
     if (drag) { renderLater = true; return; } // 拖动中不重排网格，放下后再刷新。
     renderLater = false;
     syncPresence();
@@ -1776,7 +1795,7 @@
   $('#asset-grid').addEventListener('pointerover', event => { if (event.pointerType === 'mouse') hoveredCard = event.target.closest('.asset-card:not(.folder-card)'); });
   $('#asset-grid').addEventListener('pointerleave', () => { hoveredCard = null; });
   document.addEventListener('keydown', event => {
-    if (event.key !== ' ' || event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.target.closest?.('input,textarea,select,video,audio,[contenteditable]')) return;
+    if (event.key !== ' ' || event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.target.closest?.('input,textarea,select,video,audio,[contenteditable],.folder-peek')) return;
     if ($('#detail-dialog').open) {
       if (event.target.closest?.('#detail-dialog button:not(.dialog-close)')) return;
       event.preventDefault(); window.StudioMotion.close($('#detail-dialog')); return;
@@ -1811,6 +1830,7 @@
 
   async function openDetail(asset, direction = 0, playNow = false) {
     closeHoverPreview();
+    window.StudioFolders.close();
     stopPreview();
     const controller = new AbortController(); previewRequest = controller;
     const input = { ...catalog.config }, session = memberSession();

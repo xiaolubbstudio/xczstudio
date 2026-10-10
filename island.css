@@ -70,6 +70,35 @@ html[data-theme="light"] .view-back { background:#2026290d; color:#37474d; }
 .heading-line { display:block; }
 .breadcrumb.heading-line,.breadcrumb.heading-outgoing { display:flex; }
 .heading-outgoing { position:absolute; inset:0 auto auto 0; width:max-content; pointer-events:none; }
+
+/* 文件夹悬停预览与卡片等宽，浮在素材之上、搜索和分类栏之下。 */
+.folder-peek { position:fixed; z-index:8; box-sizing:border-box; color:var(--ink); background:var(--float-solid); border:1px solid var(--line); box-shadow:0 14px 35px -14px #00000045,0 2px 6px #00000012; transform-origin:center top; animation:folder-peek-in 480ms var(--spring-snappy); }
+.folder-peek.opens-up { transform-origin:center bottom; }
+.folder-peek::before { content:""; position:absolute; left:0; right:0; top:-6px; height:7px; }
+.folder-peek.opens-up::before { top:auto; bottom:-6px; }
+.folder-peek-heading { display:flex; justify-content:space-between; align-items:center; height:34px; padding:0 12px; border-bottom:1px solid var(--line); font-size:10px; color:var(--muted); }
+.folder-peek-list { margin:0; padding:4px 5px 8px; overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:var(--faint) transparent; list-style:none; }
+.folder-peek-row { display:flex; align-items:center; position:relative; min-height:68px; border-bottom:1px solid var(--line); transition:background-color 160ms ease; }
+.folder-peek-select { display:flex; align-items:center; gap:9px; flex:1; min-width:0; padding:9px 7px; border:0; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+.folder-peek-thumb { position:relative; display:grid; place-items:center; flex:0 0 44px; width:44px; height:44px; overflow:hidden; background:var(--surface-2); }
+.folder-peek-thumb>img { position:absolute; width:100%; height:100%; object-fit:contain; }
+.folder-peek-thumb .preview-fallback { width:100%; height:100%; padding:0; }
+.folder-peek-thumb .preview-fallback .icon { width:22px; height:22px; }
+.folder-peek-badge { position:absolute; bottom:2px; right:2px; padding:1px 3px; font-size:8px; line-height:10px; background:#17171ccc; color:#fff; }
+.folder-peek-info { flex:1; min-width:0; }
+.folder-peek-info strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; line-height:1.5; font-weight:500; }
+.folder-peek-info small { display:block; margin-top:4px; font-size:11px; color:var(--muted); line-height:1.5; }
+.folder-peek .folder-peek-download { display:grid; place-items:center; flex:0 0 29px; width:29px; height:34px; margin-right:5px; color:var(--muted); border-radius:5px; text-decoration:none; opacity:1; }
+.folder-peek-download .icon { width:17px; height:17px; }
+.folder-peek-row.is-selected { background:color-mix(in srgb,var(--accent) 11%,transparent); }
+.folder-peek-row.is-selected::before { content:""; position:absolute; top:18px; bottom:18px; left:-5px; width:3px; border-radius:4px; background:var(--accent); }
+.folder-peek-row.is-selected .folder-peek-download { color:var(--accent); }
+.folder-peek-select:focus-visible { outline:1px solid var(--accent); outline-offset:-1px; }
+.folder-peek-empty { padding:22px 9px; text-align:center; color:var(--muted); font-size:12px; }
+body .asset-grid .folder-card.folder-peeking { background:var(--surface-2); }
+@media (hover:hover) { .folder-peek-row:hover { background:var(--surface-2); } .folder-peek .folder-peek-download:hover { color:var(--ink); background:var(--surface-3); } }
+@keyframes folder-peek-in { from { opacity:0; transform:translateY(-6px) scaleY(.96); } to { opacity:1; transform:none; } }
+@media (prefers-reduced-motion:reduce) { .folder-peek { animation:none; } }
 .crumb { padding:4px 6px; margin:0 -6px; border:0; background:transparent; color:var(--muted); font:inherit; font-size:15px; font-weight:600; cursor:pointer; overflow-wrap:anywhere; }
 .crumb-separator { color:var(--muted); opacity:.6; font-size:15px; }
 @media (hover:hover) and (pointer:fine) { .crumb:hover { color:var(--ink); } }
