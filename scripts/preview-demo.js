@@ -99,7 +99,8 @@
     if (path.endsWith('/order')) body.ids.forEach((id, index) => { assets.find(item => item.id === id).sort_order = index; });
     if (path.endsWith('/favorite')) body.ids.forEach(id => { favorites.delete(id); if (body.on) favorites.add(id); });
     // /?demo&viewer 模拟只看账号。
-    const data = path.endsWith('/studio_catalog/list') ? { assets, folders: ['表情包', '开场'], favorites: [...favorites], canManage: !new URLSearchParams(location.search).has('viewer') } : {};
+    const demoPercent = Math.max(0, Math.min(100, Number(new URLSearchParams(location.search).get('space') ?? 35)));
+    const data = path.endsWith('/studio_catalog/list') ? { assets, folders: ['表情包', '开场'], favorites: [...favorites], space: { total: 20 * 1024 ** 3, used: Math.round(demoPercent / 100 * 20 * 1024 ** 3), source: 'cloud', updatedAt: Date.now() }, canManage: !new URLSearchParams(location.search).has('viewer') } : {};
     return new Response(JSON.stringify({ code: 200, data }), { headers: { 'Content-Type': 'application/json' } });
   };
   // 成员在线：演示里换成假的连接——几个人在线，一个在上传（进度会慢慢走），一个页面放在后台。

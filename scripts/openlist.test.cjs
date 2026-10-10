@@ -14,6 +14,20 @@ function browser(fetch, persistent = new Map()) {
   return scope;
 }
 const response = (data, code = 200) => ({ ok: code === 200, status: code, json: async () => ({ code, data }) });
+test('quota travels with the catalog; invalid statistics cannot render as available space', async () => {
+  let requests = 0;
+  let space = { total: 20 * 1024 ** 3, used: 7 * 1024 ** 3, source: 'cloud', updatedAt: Date.now(), refreshing: true };
+  const b = browser(async () => { requests++; return response({ assets: [], folders: [], space }); });
+  b.localStorage.setItem('studio-openlist-session-v1', JSON.stringify({ endpoint: input.folderUrl.slice(0,-1), folderPath: '/', username: 'member', role: 0, token: 'fixture', created: Date.now(), expires: Date.now() + 3600000 }));
+  const data = await b.OpenListClient.list(input);
+  assert.equal(requests, 1, 'capacity needs no second foreground endpoint');
+  assert.equal(data.space.total, space.total); assert.equal(data.space.used, space.used);
+  assert.equal(data.space.source, 'cloud'); assert.equal(data.syncing, true);
+  space = { ...space, total: 0, refreshing: false };
+  assert.equal((await b.OpenListClient.list(input)).space, null);
+  space = { ...space, total: 20 * 1024 ** 3, used: -1 };
+  assert.equal((await b.OpenListClient.list(input)).space, null);
+});
 test('preview, replay and download share short-lived original links without saving them in browser storage', async () => {
   let requests = 0, clock = Date.now();
   const saved = new Map();

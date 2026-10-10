@@ -131,9 +131,9 @@ html[data-theme="light"] {
   --ink:#1d1d1f; --muted:rgba(60,60,67,.68); --faint:rgba(60,60,67,.44);
   --line:rgba(0,0,0,.08); --surface:rgba(0,0,0,.035); --surface-2:rgba(0,0,0,.055); --surface-3:rgba(0,0,0,.085);
   --primary-bg:#1d1d1f; --primary-ink:#fff;
-  --float:rgba(252,252,253,.7); --float-solid:rgba(250,250,251,.96); --float-edge:inset 0 1px 0 rgba(255,255,255,.8);
+  --float:rgba(252,250,247,.7); --float-solid:rgba(252,250,247,.96); --float-edge:inset 0 1px 0 rgba(255,253,249,.8);
   --float-shadow:0 12px 40px rgba(0,0,0,.1),0 2px 8px rgba(0,0,0,.05);
-  --page:#f3f3f5; --glow:rgba(255,255,255,.9);
+  --page:#f7f5f1; --glow:rgba(255,253,249,.65);
 }
 body,html[data-theme="light"] body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI Variable Text","Segoe UI","PingFang SC","Microsoft YaHei UI","Microsoft YaHei",sans-serif; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; color:var(--ink); background:radial-gradient(1200px 520px at 50% -140px,var(--glow),transparent 70%) no-repeat,var(--page); background-attachment:fixed; }
 /* 颗粒只留极淡一层，像 Acrylic 的噪点，不再“脏”。 */
@@ -143,7 +143,7 @@ body .tools-menu,body .asset-actions,html[data-theme="light"] body .tools-menu,h
 dialog,html[data-theme="light"] dialog { background:var(--float-solid); border:1px solid var(--line); box-shadow:0 30px 90px rgba(0,0,0,.5),var(--float-edge); backdrop-filter:var(--glass); -webkit-backdrop-filter:var(--glass); }
 html[data-theme="light"] dialog { box-shadow:0 30px 90px rgba(0,0,0,.16),var(--float-edge); }
 dialog::backdrop,html[data-theme="light"] dialog::backdrop { background:rgba(0,0,0,.42); backdrop-filter:blur(14px) saturate(120%); }
-html[data-theme="light"] dialog::backdrop { background:rgba(240,240,242,.5); }
+html[data-theme="light"] dialog::backdrop { background:rgba(242,240,235,.5); }
 body .action-rail .button,body .action-rail .icon-button,body .action-rail .avatar,html[data-theme="light"] body .action-rail button.button,html[data-theme="light"] body .action-rail button.icon-button,html[data-theme="light"] body .action-rail button.avatar { background:var(--float); color:var(--muted); border:1px solid var(--line); box-shadow:var(--float-edge); backdrop-filter:var(--glass); -webkit-backdrop-filter:var(--glass); }
 @media (hover:hover) and (pointer:fine) { body .action-rail .button:hover,body .action-rail .icon-button:hover,body .action-rail .avatar:hover,html[data-theme="light"] body .action-rail .button:hover,html[data-theme="light"] body .action-rail .icon-button:hover,html[data-theme="light"] body .action-rail .avatar:hover { background:var(--surface-3); color:var(--ink); } }
 /* 普通按钮、输入框：Fluent 式的浅层与细边，聚焦时底部一条强调色。 */
@@ -328,7 +328,7 @@ body .asset-grid:not(.list-view) .folder-card.is-drop-target { scale:1.04; }
    标题行和各分组小标题滑到顶部后依次叠成一条条小分栏（文件夹 → 图片 → 动图 → 视频 → 音频），
    每条是磨砂底，下方投一道阴影作为和内容的分界；收起的分栏右侧露出这组的几张小缩略图，点它回到这一组。 */
 :root { --stuck-bg:rgba(14,14,15,.8); --stuck-shadow:0 1px 0 var(--line),0 14px 26px -18px rgba(0,0,0,.95); }
-html[data-theme="light"] { --stuck-bg:rgba(243,243,245,.82); --stuck-shadow:0 1px 0 rgba(0,0,0,.06),0 12px 24px -18px rgba(0,0,0,.28); }
+html[data-theme="light"] { --stuck-bg:rgba(247,245,241,.82); --stuck-shadow:0 1px 0 rgba(0,0,0,.06),0 12px 24px -18px rgba(0,0,0,.28); }
 body { overflow-x:clip; }
 body .workspace-heading { position:sticky; top:0; z-index:0; }
 body .library { position:relative; z-index:1; padding-top:22px; }
@@ -522,7 +522,7 @@ body .library-dock .nav-item b { padding:1px 5px; border-radius:6px; background:
 /* 选中项：抬起的浅色胶囊（苹果分段控件），底部一条短强调色（Windows 选中标记），一起滑动。 */
 .nav-indicator { background:var(--surface-3); box-shadow:var(--float-edge); }
 .nav-indicator::after { content:""; position:absolute; left:50%; bottom:4px; width:16px; height:3px; border-radius:2px; background:var(--accent); translate:-50% 0; }
-html[data-theme="light"] .nav-indicator { background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.04); }
+html[data-theme="light"] .nav-indicator { background:#fcfaf7; box-shadow:0 1px 3px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.04); }
 html[data-theme="light"] body .library-dock .nav-item { color:var(--muted); }
 html[data-theme="light"] body .library-dock .nav-item.active { color:var(--ink); }
 @media (hover:hover) and (pointer:fine) { body .library-dock .nav-item:not(.active):hover { background:transparent; color:var(--ink); } }
@@ -556,7 +556,7 @@ body,html[data-theme="light"] body { background-attachment:scroll; }
 body::before { content:none; display:none; }
 /* 吸顶的标题行和分组小分栏不再实时模糊（每滚一帧都要重新模糊后面的内容），改成几乎不透明的底色，观感接近。 */
 :root { --stuck-bg:rgba(14,14,15,.985); }
-html[data-theme="light"] { --stuck-bg:rgba(243,243,245,.985); }
+html[data-theme="light"] { --stuck-bg:rgba(247,245,241,.985); }
 body .section-heading.is-stuck::before,body #asset-grid>.grid-group.is-stuck::before { backdrop-filter:none; -webkit-backdrop-filter:none; }
 /* 底部两栏：淡出时保留图层（彻底隐藏会让停下时重建磨砂图层、头几帧掉帧）；常驻独立的显卡图层，
    模糊半径减到 18px，弹回距离缩到 12px，移动时每帧要重算的模糊少很多，回弹的手感保留。 */
@@ -575,3 +575,39 @@ body .action-rail #upload-button.is-charging .energy::before { animation:energy-
 .presence-row.is-busy .presence-dot::after { content:""; position:absolute; inset:0; border-radius:50%; background:var(--accent); animation:presence-ring 1.6s ease-out infinite; }
 @keyframes presence-ring { from { transform:scale(1); opacity:.55; } to { transform:scale(2.6); opacity:0; } }
 @media (prefers-reduced-motion:reduce) { .presence-row.is-busy .presence-dot::after { animation:none; opacity:0; } }
+
+/* Logo 后的容量：只在空白背景上悬停/聚焦时出现；数字在 Logo 后面，操作仍归 Logo 自己。 */
+:root { --space-figure:rgba(8,16,12,.26); --space-caption:#f5f5f7; --space-caption-bg:rgba(14,14,15,.78); }
+html[data-theme="light"] { --space-figure:rgba(18,24,20,.16); --space-caption:#30332f; --space-caption-bg:rgba(247,245,241,.82); }
+body .workspace-heading { isolation:isolate; }
+body .workspace-heading .studio-lockup { position:relative; z-index:2; pointer-events:none; }
+body .workspace-heading .studio-lockup :is(.logo-chinese,.logo-english) { pointer-events:auto; }
+#storage-trigger,.storage-meter { position:absolute; inset:0 auto 0 50%; width:100vw; translate:-50% 0; }
+#storage-trigger { z-index:0; padding:0; border:0; border-radius:0; background:none; cursor:default; }
+#storage-trigger:focus-visible { outline:2px solid var(--accent); outline-offset:-4px; }
+.storage-meter { z-index:1; overflow:hidden; pointer-events:none; opacity:0; visibility:hidden; transition:opacity 380ms ease,visibility 380ms; --space-percent:0%; --banner-height:220px; }
+.is-showing-space .storage-meter { opacity:1; visibility:visible; }
+.storage-fill { position:absolute; inset:0; background:linear-gradient(90deg,#daf0cf 0%,#97caa7 30%,#dacf97 55%,#d39077 75%,#772836 100%); clip-path:inset(0 calc(100% - var(--space-percent) + 15px) 0 0); opacity:.84; }
+.storage-wave { position:absolute; top:-50%; left:calc(var(--space-percent) - 16px); width:32px; height:200%; color:var(--space-edge); fill:currentColor; opacity:.84; animation:storage-flow 6s linear infinite; animation-play-state:paused; }
+.storage-meter[data-edge="flat"] .storage-wave { display:none; }
+.storage-meter[data-edge="flat"] .storage-fill { clip-path:inset(0 calc(100% - var(--space-percent)) 0 0); }
+.storage-particles { position:absolute; inset:0; overflow:hidden; }
+.storage-particles i { position:absolute; top:var(--y); left:-10px; width:var(--size); height:var(--size); border-radius:50%; background:var(--space-figure); animation:storage-particle var(--duration) var(--delay) linear infinite; animation-play-state:paused; opacity:0; }
+.is-showing-space :is(.storage-wave,.storage-particles i) { animation-play-state:running; }
+.storage-percent { position:absolute; left:24px; top:50%; translate:0 -50%; color:var(--space-figure); font-size:calc(var(--banner-height) * 1.15); line-height:1; letter-spacing:-.075em; font-weight:650; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.storage-caption { position:absolute; right:80px; bottom:18px; max-width:calc(100% - 32px); padding:9px 13px; border-radius:12px; color:var(--space-caption); background:var(--space-caption-bg); }
+.storage-caption strong { display:block; font-size:15px; font-weight:550; }
+.storage-caption span { display:block; margin-top:4px; font-size:11px; line-height:1.5; opacity:.8; }
+.storage-caption .storage-mobile-details { display:none; }
+@keyframes storage-flow { from { transform:translateY(0); } to { transform:translateY(-50%); } }
+@keyframes storage-particle { 0% { transform:translate(0,0); opacity:0; } 12%,80% { opacity:.7; } 100% { transform:translate(calc(100vw + 20px),var(--drift)); opacity:0; } }
+@media (max-width:760px) {
+  body .workspace-heading { width:100vw; margin-inline:calc((100% - 100vw) / 2); }
+  body .workspace-heading h1.studio-lockup { width:calc(100% - 32px); }
+  .storage-percent { left:8px; font-size:min(calc(var(--banner-height) * .96),calc(100vw / var(--figure-width,1.8))); }
+  .storage-caption { display:flex; align-items:center; gap:8px; right:12px; bottom:3px; padding:3px 7px; border-radius:6px; }
+  .storage-caption strong { font-size:12px; }
+  .storage-caption #storage-details { display:none; }
+  .storage-caption .storage-mobile-details { display:block; font-size:11px; margin:0; }
+}
+@media (prefers-reduced-motion:reduce) { .storage-meter { transition:none; } .storage-wave,.storage-particles i { animation:none; } .storage-particles { display:none; } }

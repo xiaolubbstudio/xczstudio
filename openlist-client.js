@@ -93,7 +93,8 @@
     });
     const access = { canUpload: data.canManage === true, canManage: data.canManage === true, hasWritePermission: data.canManage === true };
     const favorites = Array.isArray(data.favorites) ? data.favorites.filter(id => typeof id === 'string') : [];
-    return { assets, folders: data.folders, favorites, folderId: settings.folderPath, name: '素材库', access, syncing: data.syncing === true };
+    const space = data.space && Number.isSafeInteger(data.space.total) && data.space.total > 0 && Number.isSafeInteger(data.space.used) && data.space.used >= 0 && ['cloud', 'catalog'].includes(data.space.source) ? { total: data.space.total, used: data.space.used, source: data.space.source, updatedAt: Number(data.space.updatedAt) || 0 } : null;
+    return { assets, folders: data.folders, favorites, folderId: settings.folderPath, name: '素材库', access, space, syncing: data.syncing === true || data.space?.refreshing === true };
   }
   async function manage(input, action, body = {}, signal) {
     if (!['list', 'edit', 'move', 'order', 'trash', 'restore', 'folder', 'favorite', 'backup', 'resolve'].includes(action)) throw new Error('素材操作无效。');

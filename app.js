@@ -45,7 +45,7 @@
     document.documentElement.dataset.theme = theme;
     $('#logo-theme').setAttribute('aria-pressed', String(theme === 'light'));
     $('#logo-theme').setAttribute('aria-label', theme === 'light' ? '切换到黑夜模式' : '切换到白天模式');
-    $('meta[name="theme-color"]').content = theme === 'light' ? '#eeefeb' : '#111315';
+    $('meta[name="theme-color"]').content = theme === 'light' ? '#f7f5f1' : '#0e0e0f';
   }
   let savedTheme = 'dark';
   try { savedTheme = localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'; } catch { /* theme stays usable */ }
@@ -88,6 +88,7 @@
   let storageWarning = '';
   let pendingChange = null;
   let cloudAssets = [];
+  let space = null;
   let cloudFolders = [];
   let cloudBusy = false;
   let cloudRequest = null;
@@ -137,6 +138,61 @@
   const memberSettings = () => ({ ...catalog.config, folderId: cloudFolderId });
   const isCloud = () => Boolean(catalog.config.folderUrl);
   const allAssets = () => (isCloud() ? cloudAssets : catalog.assets).filter(asset => activeType === 'trash' ? asset.deleted : !asset.deleted);
+
+  // 容量展示只用目录里已有的统计。悬停、触控和动效均不请求后台。
+  const storageHero = $('.workspace-heading'), storageTrigger = $('#storage-trigger'), storageMeter = $('#storage-meter');
+  let storageTimer = 0;
+  for (let i = 0; i < 18; i++) {
+    const particle = document.createElement('i');
+    particle.style.cssText = `--y:${7 + i * 47 % 87}%;--duration:${9 + i % 7}s;--delay:-${i * 1.37}s;--size:${1 + i % 3}px;--drift:${i % 2 ? -10 : 14}px`;
+    storageMeter.querySelector('.storage-particles').append(particle);
+  }
+  new ResizeObserver(entries => storageMeter.style.setProperty('--banner-height', `${entries[0].borderBoxSize?.[0]?.blockSize || entries[0].contentRect.height}px`)).observe(storageHero);
+  function showStorage(on) {
+    clearTimeout(storageTimer);
+    on = Boolean(on && !document.hidden && !storageTrigger.disabled);
+    storageHero.classList.toggle('is-showing-space', on);
+    storageTrigger.setAttribute('aria-expanded', String(on));
+    storageMeter.setAttribute('aria-hidden', String(!on));
+  }
+  storageTrigger.addEventListener('pointerenter', event => { if (event.pointerType === 'mouse') showStorage(true); });
+  storageTrigger.addEventListener('pointerleave', event => { if (event.pointerType === 'mouse') showStorage(false); });
+  storageTrigger.addEventListener('focus', () => { if (storageTrigger.matches(':focus-visible')) showStorage(true); });
+  storageTrigger.addEventListener('blur', () => showStorage(false));
+  storageTrigger.addEventListener('click', event => {
+    if (event.detail === 0 || (event.pointerType && event.pointerType !== 'mouse') || matchMedia('(hover:none)').matches) {
+      showStorage(!storageHero.classList.contains('is-showing-space'));
+      if (storageHero.classList.contains('is-showing-space')) storageTimer = setTimeout(() => showStorage(false), 6000);
+    }
+  });
+  window.addEventListener('scroll', () => { if (storageHero.classList.contains('is-showing-space')) showStorage(false); }, { passive: true });
+  window.addEventListener('blur', () => showStorage(false));
+  document.addEventListener('visibilitychange', () => { if (document.hidden) showStorage(false); });
+  function renderStorage() {
+    storageTrigger.disabled = !isOpenList() || !memberSession();
+    if (storageTrigger.disabled) showStorage(false);
+    const valid = space && Number.isSafeInteger(space.total) && space.total > 0 && Number.isSafeInteger(space.used) && space.used >= 0;
+    const ratio = valid ? Math.min(1, space.used / space.total) : 0;
+    const percentage = Math.round(ratio * 1000) / 10;
+    storageMeter.style.setProperty('--space-percent', `${ratio * 100}%`);
+    // The gradient spans the whole banner; it is clipped to usage rather than
+    // squeezing the red end into even a nearly empty green bar.
+    const stops = [[0, [218, 240, 207]], [.3, [151, 202, 167]], [.55, [218, 207, 151]], [.75, [211, 144, 119]], [1, [119, 40, 54]]];
+    const end = stops.findIndex(stop => stop[0] >= ratio), right = stops[Math.max(1, end)], left = stops[Math.max(0, end - 1)];
+    const t = (ratio - left[0]) / (right[0] - left[0]);
+    storageMeter.style.setProperty('--space-edge', `rgb(${left[1].map((v, i) => Math.round(v + (right[1][i] - v) * t)).join(' ')})`);
+    storageMeter.dataset.edge = ratio > 0 && ratio < 1 ? 'wave' : 'flat';
+    storageMeter.querySelector('.storage-percent').textContent = valid ? `${percentage}%` : '—';
+    storageMeter.style.setProperty('--figure-width', String(storageMeter.querySelector('.storage-percent').textContent.length * .6));
+    const gb = bytes => (bytes / 1024 ** 3).toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+    const remaining = valid ? `可用 ${gb(Math.max(0, space.total - space.used))} GB` : '空间暂未读取';
+    $('#storage-available').textContent = remaining;
+    const age = valid && space.updatedAt ? Math.max(0, Math.floor((Date.now() - space.updatedAt) / 60000)) : 0;
+    const source = valid ? space.source === 'cloud' ? `云盘统计 · ${age < 1 ? '刚刚更新' : age < 60 ? `${age} 分钟前更新` : `${Math.floor(age / 60)} 小时前更新`}` : '按素材统计 · 含回收站' : '总容量 20 GB';
+    $('#storage-details').textContent = valid ? `已用 ${gb(space.used)} / ${gb(space.total)} GB · ${source}` : source;
+    $('#storage-mobile-details').textContent = valid ? `已用 ${gb(space.used)} / ${gb(space.total)} GB${space.source === 'catalog' ? ' · 估算' : ''}` : source;
+    storageTrigger.setAttribute('aria-label', valid ? `${remaining}，已用 ${percentage}%，${$('#storage-details').textContent}` : '查看素材库空间，容量暂未读取');
+  }
 
   // 优先复用预览字节；目录中的临时缩略图失败时只补取一次新地址。
   let thumbnailObserver = null;
@@ -236,7 +292,7 @@
     try {
       if (!session || !data) { localStorage.removeItem(CATALOG_CACHE); return; }
       const assets = data.assets.map(asset => ({ ...asset, previewUrl: '', cachedPreview: Boolean(asset.previewUrl) }));
-      const value = JSON.stringify({ endpoint: session.endpoint, folderPath: session.folderPath, username: session.username, assets, folders: data.folders || [], favorites: data.favorites || [], folderId: data.folderId, name: data.name, access: data.access });
+      const value = JSON.stringify({ endpoint: session.endpoint, folderPath: session.folderPath, username: session.username, assets, folders: data.folders || [], favorites: data.favorites || [], folderId: data.folderId, name: data.name, access: data.access, space: data.space });
       if (value.length <= 2000000) localStorage.setItem(CATALOG_CACHE, value); else localStorage.removeItem(CATALOG_CACHE);
     } catch { /* 存储不可用时只是不显示上次目录。 */ }
   }
@@ -266,11 +322,13 @@
     memberRequest?.abort(); memberRequest = null;
     memberBusy = false; cloudFolderId = null; cloudFolderName = '';
     const listSession = memberSession();
+    if (!listSession) space = null;
     // 本机有有效会话就直接按已登录显示，不单独等待账号核实；后台拒绝时再退回登录。
     if (!isOpenList() || !listSession || member?.name !== listSession.username) member = null;
     const cached = !cloudAssets.length && cachedCatalog(listSession);
     if (cached) {
       cloudAssets = cached.assets; cloudFolders = cached.folders; cloudFolderId = cached.folderId; cloudFolderName = cached.name;
+      space = cached.space || null;
       if (Array.isArray(cached.favorites)) favorites = new Set(cached.favorites);
       member = { name: listSession.username, role: listSession.role, avatarUrl: '', ...cached.access };
     }
@@ -289,6 +347,7 @@
       // Explicit refresh also retries failed/timed-out previews. Cached image bytes stay intact.
       if (notify) clearThumbnails();
       cloudAssets = data.assets;
+      space = data.space || null;
       cloudFolders = data.folders || [];
       cloudFolderId = data.folderId;
       cloudFolderName = data.name;
@@ -308,7 +367,7 @@
       if (needsLogin) {
         // 令牌失效或被撤销：只清本机，显示登录入口。
         if (memberSession()) cloudAuth().logout();
-        cacheCatalog(null); cloudAssets = []; cloudFolders = []; member = null; renderMember();
+        cacheCatalog(null); cloudAssets = []; cloudFolders = []; space = null; member = null; renderMember();
       }
       const offline = error instanceof TypeError && !controller.signal.aborted;
       cloudStatus(needsLogin ? '' : controller.signal.aborted ? '连接超时，请重试。' : offline ? '连不上素材库，请检查网络或代理。' : error.message, !needsLogin);
@@ -460,7 +519,7 @@
     memberRequest?.abort(); memberRequest = null;
     let logoutError = '';
     try { await cloudAuth().logout(catalog.config); } catch (error) { logoutError = error.message; }
-    if (isOpenList()) { cloudRequest?.abort(); cacheCatalog(null); cloudAssets = []; cloudFolders = []; favorites = new Set(); cloudFolderId = null; setSelecting(false); render(); cloudStatus(''); }
+    if (isOpenList()) { cloudRequest?.abort(); cacheCatalog(null); cloudAssets = []; cloudFolders = []; space = null; favorites = new Set(); cloudFolderId = null; setSelecting(false); render(); cloudStatus(''); }
     member = null; memberBusy = false;
     renderMember();
     window.StudioMotion.close($('#member-dialog'));
@@ -1428,6 +1487,7 @@
   });
 
   function render() {
+    renderStorage();
     closeHoverPreview();
     if (drag) { renderLater = true; return; } // 拖动中不重排网格，放下后再刷新。
     renderLater = false;
@@ -2028,6 +2088,7 @@
       if (next.clientId && !next.folderUrl) throw new Error('请同时填写素材文件夹分享链接。');
       if (google && (!next.folderUrl || !next.apiKey)) throw new Error('请填写 Google 文件夹分享链接和 API Key。OAuth Client ID、项目编号用于成员上传，可稍后填写。');
       cloudAssets = [];
+      space = null;
       saveCatalog({ ...catalog, config: next });
       refreshCloud();
       $('#settings-error').textContent = '';
