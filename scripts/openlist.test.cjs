@@ -14,6 +14,48 @@ function browser(fetch, persistent = new Map()) {
   return scope;
 }
 const response = (data, code = 200) => ({ ok: code === 200, status: code, json: async () => ({ code, data }) });
+test('preview, replay and download share short-lived original links without saving them in browser storage', async () => {
+  let requests = 0, clock = Date.now();
+  const saved = new Map();
+  const b = browser(async () => { requests++; return response({ raw_url: 'https://cdn.example.test/file?sign=private-link-' + requests }); }, saved);
+  b.Date = { now: () => clock };
+  const seed = token => b.localStorage.setItem('studio-openlist-session-v1', JSON.stringify({ endpoint: input.folderUrl.slice(0,-1), folderPath: '/', username: 'member', role: 0, token, created: clock, expires: clock + 3600000 }));
+  seed('member-token');
+  const asset = { id: 'movie-1', managed: true, modified: '2026-10-11', revision: 1, sizeMB: 80 };
+  const [first, second] = await Promise.all([b.OpenListClient.resolveCached(input, asset), b.OpenListClient.resolveCached(input, asset)]);
+  assert.equal(first, second); assert.equal(requests, 1);
+  assert.equal(await b.OpenListClient.resolveCached(input, asset), first); assert.equal(requests, 1);
+  const renewed = await b.OpenListClient.resolveCached(input, asset, undefined, true);
+  assert.notEqual(renewed, first); assert.equal(requests, 2);
+  clock += 46000;
+  await b.OpenListClient.resolveCached(input, asset); assert.equal(requests, 3);
+  await b.OpenListClient.resolveCached(input, { ...asset, revision: 2 }); assert.equal(requests, 4);
+  seed('other-device-session');
+  await b.OpenListClient.resolveCached(input, asset); assert.equal(requests, 5);
+  b.OpenListClient.clearResolved();
+  await b.OpenListClient.resolveCached(input, asset); assert.equal(requests, 6);
+  assert.equal([...saved.values()].some(value => value.includes('private-link-')), false);
+});
+test('closing one dialog does not cancel a shared link request, and failed resolution remains retryable', async () => {
+  let finish, requests = 0, fail = false;
+  const b = browser(async () => {
+    requests++; if (fail) throw new TypeError('offline');
+    await new Promise(resolve => { finish = resolve; });
+    return response({ raw_url: 'https://cdn.example.test/video.mp4' });
+  });
+  b.localStorage.setItem('studio-openlist-session-v1', JSON.stringify({ endpoint: input.folderUrl.slice(0,-1), folderPath: '/', username: 'member', role: 0, token: 'fixture-token', created: Date.now(), expires: Date.now() + 3600000 }));
+  const asset = { id: 'video', managed: true };
+  const closing = new AbortController();
+  const first = b.OpenListClient.resolveCached(input, asset, closing.signal);
+  const second = b.OpenListClient.resolveCached(input, asset);
+  closing.abort(); finish();
+  await assert.rejects(first); assert.equal(await second, 'https://cdn.example.test/video.mp4'); assert.equal(requests, 1);
+  b.OpenListClient.clearResolved(); fail = true;
+  await assert.rejects(b.OpenListClient.resolveCached(input, asset));
+  fail = false;
+  const retry = b.OpenListClient.resolveCached(input, asset); finish();
+  assert.equal(await retry, 'https://cdn.example.test/video.mp4'); assert.equal(requests, 3);
+});
 test('thumbnail renewal uses the authenticated catalog and validates returned media addresses', async () => {
   let result = 'https://cdn.example.test/fresh.jpg';
   const b = browser(async (url, options) => {
@@ -125,6 +167,10 @@ test('signed original links support media and reject credential leaks and direct
   await assert.rejects(b.OpenListClient.resolve(settings, { path: '/assets/../private/file' }));
   for (const value of ['http://cdn.example.test/file', 'javascript:alert(1)', 'https://cdn.example.test/file?token=secret', 'https://user:secret@cdn.example.test/file']) assert.throws(() => b.OpenListClient.mediaUrl(value, input));
   for (const folderUrl of ['http://library.example.test/', input.folderUrl + '?token=secret', input.folderUrl + '#secret', 'https://user:secret@library.example.test/', input.folderUrl + 'api']) assert.throws(() => b.OpenListClient.config({ ...input, folderUrl }));
+  const local = { ...input, folderUrl: 'http://127.0.0.1:4186/' };
+  assert.equal(b.OpenListClient.mediaUrl('/media/image.png', local), 'http://127.0.0.1:4186/media/image.png');
+  assert.throws(() => b.OpenListClient.mediaUrl('http://127.0.0.1:4187/media/image.png', local));
+  assert.throws(() => b.OpenListClient.mediaUrl('http://192.168.1.2/media/image.png', local));
 });
 
 test('one catalog request returns virtual folders, stable IDs and server management permission', async () => {
@@ -134,7 +180,7 @@ test('one catalog request returns virtual folders, stable IDs and server managem
     if (url.endsWith('/me')) return response({ username: 'member', role: 0, permission: 8 });
     directoryRequests++;
     const body = JSON.parse(options.body);
-    if (url.includes('studio_catalog')) { assert.equal(body.path, '/'); return response({ canManage: true, folders: ['动画'], assets: [{ id: 'ol-/original.mov', folder: '动画', name: '素材.mov', size: 300 * 1048576, modified: '2026-10-01', thumb: '', revision: 2, deleted: 0 }] }); }
+    if (url.includes('studio_catalog')) { assert.equal(body.path, '/'); return response({ canManage: true, folders: ['动画'], assets: [{ id: 'ol-/original.mov', folder: '动画', name: '素材.mov', size: 300 * 1048576, modified: '2026-10-01', added_ms: 1791670000000, thumb: '', revision: 2, deleted: 0 }] }); }
     return response({ write: true, total: 0, content: [] });
   });
   await b.OpenListAuth.begin(input, 'member', 'fixture');
@@ -145,6 +191,7 @@ test('one catalog request returns virtual folders, stable IDs and server managem
   assert.deepEqual(Array.from(data.assets[0].tags), ['动画']);
   assert.equal(data.assets[0].type, 'video');
   assert.equal(data.assets[0].sizeMB, 300);
+  assert.equal(data.assets[0].addedAt, 1791670000000);
   assert.equal(directoryRequests, 1); // 由后台一次汇总，不逐个子目录请求 Worker。
   assert.equal(data.access.canManage, true);
   assert.equal(data.access.hasWritePermission, true);

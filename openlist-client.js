@@ -54,7 +54,8 @@
   function mediaUrl(value, input) {
     if (!value) return '';
     const url = new URL(value, config(input).endpoint);
-    if (url.protocol !== 'https:' || url.username || url.password || /(?:^|[?&])(?:token|access_token|auth|authorization)=/i.test(url.search)) throw new Error('后台返回了不安全的文件地址。');
+    const loopback = url.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(url.hostname) && url.origin === config(input).endpoint;
+    if ((url.protocol !== 'https:' && !loopback) || url.username || url.password || /(?:^|[?&])(?:token|access_token|auth|authorization)=/i.test(url.search)) throw new Error('后台返回了不安全的文件地址。');
     return url.href;
   }
   const sessionFor = input => root.OpenListAuth.get(input);
@@ -88,7 +89,7 @@
     if (!Array.isArray(data?.assets) || !Array.isArray(data?.folders) || data.assets.length > 5000) throw new Error('素材管理目录无效。');
     const assets = data.assets.map(file => {
       if (typeof file.id !== 'string' || typeof file.name !== 'string' || !file.name || /[\\/\u0000-\u001f]/.test(file.name) || typeof file.folder !== 'string') throw new Error('云端返回了无效素材。');
-      return { id: file.id, name: file.name, type: type(file.name), folder: file.folder || '根目录', tags: file.folder.split('/').filter(Boolean), description: '', member: '', date: String(file.modified || '').slice(0, 10), modified: String(file.modified || ''), sizeMB: Number(file.size) / 1048576, cloud: true, provider: 'openlist', managed: true, deleted: !!file.deleted, pending: !!file.pending, revision: file.revision, order: Number.isInteger(file.sort_order) ? file.sort_order : null, previewUrl: mediaUrl(file.thumb, input), sourceUrl: '' };
+      return { id: file.id, name: file.name, type: type(file.name), folder: file.folder || '根目录', tags: file.folder.split('/').filter(Boolean), description: '', member: '', date: String(file.modified || '').slice(0, 10), modified: String(file.modified || ''), addedAt: Number(file.added_ms) || 0, sizeMB: Number(file.size) / 1048576, cloud: true, provider: 'openlist', managed: true, deleted: !!file.deleted, pending: !!file.pending, revision: file.revision, order: Number.isInteger(file.sort_order) ? file.sort_order : null, previewUrl: mediaUrl(file.thumb, input), sourceUrl: '' };
     });
     const access = { canUpload: data.canManage === true, canManage: data.canManage === true, hasWritePermission: data.canManage === true };
     const favorites = Array.isArray(data.favorites) ? data.favorites.filter(id => typeof id === 'string') : [];
@@ -124,6 +125,32 @@
     return url;
   }
   function downloadUrl() { return '#'; }
+  // Signed media links live only in page memory, for 45 seconds, and stay bound to the session.
+  const resolvedLinks = new Map();
+  function clearResolved() { resolvedLinks.clear(); }
+  async function resolveCached(input, asset, signal, force = false) {
+    signal?.throwIfAborted();
+    const session = sessionFor(input);
+    if (!session) { const error = new Error('请先登录素材库。'); error.code = 401; throw error; }
+    const key = JSON.stringify([config(input), asset.id, asset.path, asset.modified || asset.date, asset.sizeMB, asset.revision]);
+    for (const [oldKey, entry] of resolvedLinks) if (entry.expires <= Date.now() || entry.token !== session.token) resolvedLinks.delete(oldKey);
+    if (force) resolvedLinks.delete(key);
+    let entry = resolvedLinks.get(key);
+    if (!entry) {
+      entry = { token: session.token, expires: Date.now() + 45000 };
+      resolvedLinks.set(key, entry);
+      while (resolvedLinks.size > 64) resolvedLinks.delete(resolvedLinks.keys().next().value);
+      // A closed dialog must not cancel another caller sharing this small authorization request.
+      entry.promise = resolve(input, asset, root.AbortSignal.timeout(20000)).catch(error => {
+        if (resolvedLinks.get(key) === entry) resolvedLinks.delete(key);
+        throw error;
+      });
+    }
+    const url = await entry.promise;
+    signal?.throwIfAborted();
+    if (sessionFor(input)?.token !== session.token) throw new Error('账号已变化，请重新打开素材。');
+    return url;
+  }
   async function resolvePreview(input, asset, signal) {
     if (!asset.managed) return mediaUrl(asset.previewUrl, input);
     const data = await manage(input, 'resolve', { id: asset.id, preview: true }, signal);
@@ -192,7 +219,7 @@
     progress?.(100);
     return result;
   }
-  const api = { config, request, mediaUrl, list, manage, directory, profile, memberAccess, resolve, resolvePreview, downloadUrl, uploadLocation, upload };
+  const api = { config, request, mediaUrl, list, manage, directory, profile, memberAccess, resolve, resolveCached, clearResolved, resolvePreview, downloadUrl, uploadLocation, upload };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.OpenListClient = api;
 })(typeof window === 'undefined' ? globalThis : window);

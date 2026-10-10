@@ -40,9 +40,7 @@
     };
     const result = writes.then(save); writes = result.catch(() => {}); return result;
   }
-  async function load(parts, resolveUrl, { signal, limit, kind, onProgress, refreshUrl }) {
-    check(signal);
-    const id = await key(parts), cache = await store();
+  async function readCached(id, cache, { signal, limit, kind }) {
     await writes; check(signal); // 等待已完成下载的缓存写入，避免快速重开时重复下载。
     let hit = memory.get(id);
     if (!hit && cache) { try { const response = await cache.match(id); if (response) hit = await response.blob(); } catch { /* memory fallback */ } }
@@ -53,6 +51,17 @@
       try { persistent = Boolean(cache && await cache.match(id)); } catch { /* memory only */ }
       check(signal); return { blob: hit, cached: true, persistent };
     }
+    return null;
+  }
+  async function peek(parts, options) {
+    check(options.signal);
+    return readCached(await key(parts), await store(), options);
+  }
+  async function load(parts, resolveUrl, { signal, limit, kind, onProgress, refreshUrl }) {
+    check(signal);
+    const id = await key(parts), cache = await store();
+    const hit = await readCached(id, cache, { signal, limit, kind });
+    if (hit) return hit;
     // 命中缓存时不调用 resolveUrl，因此不会重新请求后台或临时直链。
     let blob;
     try { blob = await download(await resolveUrl()); }
@@ -98,7 +107,7 @@
       return blob;
     }
   }
-  const api = { key, load };
+  const api = { key, peek, load };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.StudioPreviewCache = api;
 })(typeof window === 'undefined' ? globalThis : window);

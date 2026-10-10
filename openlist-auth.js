@@ -74,6 +74,7 @@
   }
   async function logout(input) {
     const session = input ? get(input) : null;
+    root.OpenListClient.clearResolved?.();
     root.sessionStorage.removeItem(KEY);
     // Tombstone prevents a second tab's old sessionStorage from resurrecting this login.
     try { root.localStorage?.setItem(KEY, 'null'); } catch {}

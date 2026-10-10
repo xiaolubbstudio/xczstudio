@@ -878,7 +878,7 @@
   }
   function dropTarget(node, folder) { if (canManage()) node.dataset.dropFolder = folder; }
   function cancelPress() { if (press) clearTimeout(press.timer); press = null; }
-  const canReorder = d => d.ids.length === 1 && activeType === 'all' && !$('#search-input').value.trim();
+  const canReorder = d => d.ids.length === 1 && activeType === 'all' && Boolean(currentFolder) && !$('#search-input').value.trim();
   function liftCard(x, y) {
     const { card, asset, pointer, type } = press; cancelPress();
     if (!card.isConnected) return;
@@ -1025,7 +1025,7 @@
   // 排序方式记在这台浏览器上。
   const SORT_KEY = 'studio-sort-v1';
   function rememberSort() { try { localStorage.setItem(SORT_KEY, $('#sort-select').value); } catch { /* 只是下次回到默认排序。 */ } }
-  try { const saved = localStorage.getItem(SORT_KEY); if (saved && $(`#sort-select option[value="${saved}"]`)) $('#sort-select').value = saved; } catch { /* 默认排序 */ }
+  try { const saved = localStorage.getItem(SORT_KEY); if (currentFolder && saved && $(`#sort-select option[value="${saved}"]`)) $('#sort-select').value = saved; } catch { /* 默认排序 */ }
 
   // 移动只改网站目录：先在页面上挪过去，后台确认失败再挪回来。
   async function moveAssets(ids, folder) {
@@ -1336,8 +1336,7 @@
     const known = new Set(cloudFolders);
     for (const asset of (isCloud() ? cloudAssets : catalog.assets)) if (!asset.deleted) asset.tags.forEach((_, index) => known.add(asset.tags.slice(0, index + 1).join('/')));
     if (currentFolder && !cloudBusy && isCloud() && memberSession() && !known.has(currentFolder)) { currentFolder = ''; writeHash(false); }
-    // 全部素材且没有搜索时像文件管理器：先列下一层文件夹，再列这一层的素材。
-    // 图片/视频/音频和搜索则列出当前位置及其所有下层里符合的素材。
+    // 主页汇总所有文件夹里的素材；进入具体文件夹后，全部素材只列当前这一层。
     const browse = activeType === 'all' && !term;
     // 搜索：名称原文、全拼、首字母、混拼都算（见 pinyin-search.js），所在文件夹也能搜到；越贴近的排越前。
     const relevanceOf = new Map();
@@ -1353,20 +1352,24 @@
       if (activeType === 'trash') return matchesTerm(asset);
       if (activeType === 'favorites') return favorites.has(asset.id) && matchesTerm(asset);
       const place = folderOf(asset);
-      if (browse ? place !== currentFolder : !within(place, currentFolder)) return false;
+      if (browse && currentFolder ? place !== currentFolder : !within(place, currentFolder)) return false;
       const matchesType = activeType === 'all' || (activeType === 'image' ? ['image', 'animation'].includes(asset.type) : asset.type === activeType);
       return matchesType && matchesTerm(asset);
     }).sort((a, b) => kindRank(a) - kindRank(b) || (term ? relevance(b) - relevance(a) : 0) || compare(a, b));
     function compare(a, b) {
       if (sort === 'name') return a.name.localeCompare(b.name, 'zh-CN');
       // 自定义顺序：还没排过的（比如新上传的）排在前面，按添加时间。
-      if (sort === 'custom') return (a.order ?? -1) - (b.order ?? -1) || String(b.modified || b.date).localeCompare(String(a.modified || a.date));
+      if (sort === 'custom') return (a.order ?? -1) - (b.order ?? -1) || newest(a, b);
       if (sort === 'largest' || sort === 'smallest') {
         if (a.sizeMB === null) return b.sizeMB === null ? 0 : 1;
         if (b.sizeMB === null) return -1;
         return sort === 'largest' ? b.sizeMB - a.sizeMB : a.sizeMB - b.sizeMB;
       }
-      return sort === 'oldest' ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date);
+      return sort === 'oldest' ? newest(b, a) : newest(a, b);
+    }
+    function newest(a, b) {
+      const time = asset => Number(asset.addedAt) || Date.parse(asset.modified || asset.date) || 0;
+      return time(b) - time(a) || String(b.modified || b.date).localeCompare(String(a.modified || a.date)) || a.id.localeCompare(b.id);
     }
     const subfolders = browse ? [...known].filter(path => parentOf(path) === currentFolder).sort((a, b) => a.localeCompare(b, 'zh-CN')) : [];
     $('#asset-grid').classList.toggle('list-view', activeView === 'list');
@@ -1452,7 +1455,7 @@
   function copyImage(asset) {
     const input = { ...catalog.config }, session = memberSession();
     const png = (async () => {
-      const result = await window.StudioPreviewCache.load(previewKey(input, session, asset, 'image'), () => window.OpenListClient.resolve(input, asset, AbortSignal.timeout(20000)), { kind: 'image', limit: 20 * 1048576 });
+      const result = await window.StudioPreviewCache.load(previewKey(input, session, asset, 'image'), () => window.OpenListClient.resolveCached(input, asset, AbortSignal.timeout(20000)), { kind: 'image', limit: 20 * 1048576 });
       if (result.blob.type === 'image/png') return result.blob;
       const bitmap = await createImageBitmap(result.blob);
       const canvas = element('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height;
@@ -1626,7 +1629,7 @@
     const input = { ...catalog.config };
     const session = memberSession();
     try {
-      const url = await window.OpenListClient.resolve(input, asset, AbortSignal.timeout(20000));
+      const url = await window.OpenListClient.resolveCached(input, asset, AbortSignal.timeout(20000));
       if (catalog.config.provider !== 'openlist' || memberSession()?.token !== session?.token) return;
       const anchor = element('a'); anchor.href = url; anchor.download = asset.name; anchor.rel = 'noreferrer'; document.body.append(anchor); anchor.click(); anchor.remove();
     } catch (error) { toast(error.message); }
@@ -1670,59 +1673,115 @@
     else window.StudioMotion.open($('#detail-dialog'));
     $('#detail-dialog').scrollTop = 0;
     const current = () => !controller.signal.aborted && activeAsset === asset && catalog.config.folderUrl === input.folderUrl && catalog.config.provider === input.provider && (!isOpenList() || memberSession()?.token === session?.token);
-    async function loadPart(part, resolveUrl, kind, limit, onProgress) {
+    async function loadPart(part, resolveUrl, kind, limit, onProgress, refreshUrl) {
       if (asset.provider === 'openlist' && !session) throw new Error('请先登录素材库');
-      const result = await window.StudioPreviewCache.load(previewKey(input, session, asset, part), resolveUrl, { signal: controller.signal, kind, limit, onProgress });
+      const result = await window.StudioPreviewCache.load(previewKey(input, session, asset, part), resolveUrl, { signal: controller.signal, kind, limit, onProgress, refreshUrl });
       if (!current()) return null;
       const url = URL.createObjectURL(result.blob); previewObjectUrls.push(url);
       return url;
     }
-    const imageSource = () => asset.provider === 'openlist' && asset.type === 'image' ? window.OpenListClient.resolve(input, asset, controller.signal) : safeUrl(asset.detailPreviewUrl || asset.previewUrl);
-    const originalSource = () => asset.provider === 'openlist' ? window.OpenListClient.resolve(input, asset, controller.signal) : !asset.cloud ? safeUrl(asset.previewUrl) : '';
+    const originalSource = (force = false) => asset.provider === 'openlist' ? window.OpenListClient.resolveCached(input, asset, controller.signal, force) : !asset.cloud ? safeUrl(asset.previewUrl) : '';
+    const imageSource = (force = false) => asset.provider === 'openlist' ? originalSource(force) : safeUrl(asset.detailPreviewUrl || asset.previewUrl);
+    async function cachedPart(part, kind, limit) {
+      const result = await window.StudioPreviewCache.peek(previewKey(input, session, asset, part), { signal: controller.signal, kind, limit });
+      if (!current() || !result) return '';
+      const url = URL.createObjectURL(result.blob); previewObjectUrls.push(url); return url;
+    }
+    function showImage(url, container, onError, poster = false) {
+      const image = element('img'); image.src = url; image.alt = asset.name;
+      image.addEventListener('load', () => { if (current()) preview.dataset.surface = imageSurface(image); }, { once: true });
+      image.addEventListener('error', () => { if (current()) { if (poster) image.remove(); else if (onError) onError(); else container.replaceChildren(fallback(asset.type, '预览不可用')); } }, { once: true });
+      if (poster) { container.querySelector('.preview-fallback')?.remove(); container.prepend(image); }
+      else container.replaceChildren(image);
+    }
+    async function showPoster(stage) {
+      const part = asset.type === 'video' ? 'poster' : 'thumbnail';
+      // If the card is still loading, reuse its result rather than downloading the same bytes twice.
+      const thumbnail = thumbnails.get(JSON.stringify(previewKey(input, session, asset, part)));
+      if (thumbnail?.promise) await thumbnail.promise;
+      if (!current()) return;
+      const renew = asset.provider === 'openlist' ? () => window.OpenListClient.resolvePreview(input, asset, controller.signal) : undefined;
+      const url = await loadPart(part, () => safeUrl(asset.previewUrl), 'image', 4 * 1048576, undefined, renew);
+      if (current() && url && !stage.dataset.original && !stage.dataset.playing) showImage(url, stage, undefined, true);
+    }
+    function playback(stage, audio) {
+      const play = element('button', 'button primary preview-play');
+      play.append(icon('play'), document.createTextNode('播放')); stage.append(play);
+      play.addEventListener('click', async () => {
+        play.disabled = true; play.textContent = '加载中';
+        stage.dataset.playing = '1';
+        try {
+          // Older complete local previews are reusable; new playback streams directly from the cloud.
+          const local = await cachedPart(audio ? 'audio' : 'video', audio ? 'audio' : 'video', (audio ? 20 : 512) * 1048576);
+          const url = local || await originalSource();
+          if (!current() || !url) return;
+          const media = element(audio ? 'audio' : 'video'); media.controls = true; media.preload = 'none'; media.src = url;
+          if (!audio) media.setAttribute('playsinline', '');
+          let renewed = false;
+          media.addEventListener('error', async () => {
+            if (!current() || !media.isConnected) return;
+            if (!local && asset.provider === 'openlist' && !renewed && media.error?.code !== 3) {
+              renewed = true;
+              const position = media.currentTime;
+              try {
+                const fresh = await originalSource(true);
+                if (!current()) return;
+                media.addEventListener('loadedmetadata', () => { if (current() && position) media.currentTime = position; }, { once: true });
+                media.src = fresh; media.play().catch(() => {}); return;
+              } catch { if (!current()) return; }
+            }
+            media.pause(); media.removeAttribute('src'); media.load();
+            stage.replaceChildren(fallback(asset.type, '网页无法播放，请下载'));
+          });
+          stage.replaceChildren(media); media.play().catch(() => {});
+        } catch (error) { if (current()) { delete stage.dataset.playing; play.disabled = false; play.replaceChildren(icon('play'), document.createTextNode('重试')); toast(error.message); } }
+      });
+    }
     try {
-      if (asset.type === 'video') {
+      if (asset.type === 'video' || asset.type === 'audio') {
+        const audio = asset.type === 'audio';
         const stage = element('div', 'preview-stage');
         preview.replaceChildren(stage);
-        try {
-          const poster = await loadPart('poster', () => safeUrl(asset.previewUrl), 'image', 4 * 1048576);
-          if (!current()) return;
-          if (poster) { const image = element('img'); image.src = poster; image.alt = `${asset.name} 缩略图`; stage.append(image); }
-        } catch (error) { if (controller.signal.aborted) return; }
+        if (audio) stage.append(audioArt());
         if (!current()) return;
         if (!stage.children.length) stage.append(fallback('video'));
         const extension = asset.name.split('.').pop().toLowerCase();
-        // MOV / ProRes 和 MKV 的浏览器兼容性不足，不为试播下载整份大原件。
-        const nativeVideo = ['mp4', 'webm', 'm4v'].includes(extension) && (asset.provider === 'openlist' || !asset.cloud) && (!asset.sizeMB || asset.sizeMB <= 512);
-        if (nativeVideo) {
-          const play = element('button', 'button primary preview-play');
-          play.append(icon('play'), document.createTextNode('播放'));
-          stage.append(play);
-          play.addEventListener('click', async () => {
-            play.disabled = true; play.textContent = '加载中';
-            try {
-              const url = await loadPart('video', originalSource, 'video', 512 * 1048576, (bytes, total) => {
-                if (current()) play.textContent = total ? `加载中 ${Math.floor(bytes / total * 100)}%` : `加载中 ${(bytes / 1048576).toFixed(1)} MB`;
-              });
-              if (!current() || !url) return;
-              const video = element('video'); video.src = url; video.controls = true; video.preload = 'none'; video.setAttribute('playsinline', '');
-              video.addEventListener('error', () => { if (current()) preview.replaceChildren(fallback('video', '网页无法播放，请下载')); }, { once: true });
-              stage.replaceChildren(video); video.play().catch(() => {});
-            } catch (error) { if (current()) { play.disabled = false; play.replaceChildren(icon('play'), document.createTextNode('重试')); toast(error.message); } }
-          });
-        } else stage.append(element('span', 'preview-caption', asset.sizeMB > 512 ? '文件较大，下载后播放' : '下载后播放'));
+        const supported = audio || ['mp4', 'webm', 'm4v'].includes(extension);
+        if (supported && (asset.provider === 'openlist' || !asset.cloud)) playback(stage, audio);
+        else stage.append(element('span', 'preview-caption', '下载后播放'));
+        if (!audio) showPoster(stage).catch(() => {}); // The play button never waits on the cover image.
       } else if (asset.type === 'other') {
         preview.replaceChildren(fallback('other')); // 非图片、视频、音频不读取原件，直接下载。
       } else {
-        const audio = asset.type === 'audio';
-        const url = await loadPart(audio ? 'audio' : 'image', audio ? originalSource : imageSource, audio ? 'audio' : 'image', 20 * 1048576);
+        const saved = await cachedPart('image', 'image', 20 * 1048576);
         if (!current()) return;
-        const media = element(audio ? 'audio' : 'img'); media.src = url;
-        if (audio) { media.controls = true; media.preload = 'none'; } else {
-          media.alt = asset.name;
-          media.addEventListener('load', () => { if (current()) preview.dataset.surface = imageSurface(media); }, { once:true });
+        if (saved) { showImage(saved, preview); return; }
+        const stage = element('div', 'preview-stage'); stage.append(fallback(asset.type)); preview.replaceChildren(stage);
+        showPoster(stage).catch(() => {});
+        if (!current()) return;
+        async function loadOriginal(force = false) {
+          const url = Number.isFinite(asset.sizeMB) && asset.sizeMB <= 20 || !asset.cloud
+            ? await loadPart('image', () => imageSource(force), 'image', 20 * 1048576, undefined, asset.provider === 'openlist' ? () => imageSource(true) : undefined)
+            : await imageSource(force);
+          if (current() && url) {
+            stage.dataset.original = '1';
+            showImage(url, stage, !force && asset.provider === 'openlist' ? () => loadOriginal(true).catch(error => { if (current()) toast(error.message); }) : undefined);
+          }
         }
-        media.addEventListener('error', () => { if (current()) preview.replaceChildren(fallback(asset.type, '预览不可用')); }, { once: true });
-        preview.replaceChildren(media);
+        const automatic = !asset.cloud || (asset.sizeMB > 0 && asset.sizeMB <= (kindOf(asset) === 'gif' ? 20 : 2));
+        function offerOriginal(label) {
+          const original = element('button', 'button primary preview-play', kindOf(asset) === 'gif' ? '播放' : '原图'); original.type = 'button';
+          if (label) original.textContent = label;
+          original.addEventListener('click', async () => {
+            original.disabled = true; original.textContent = '加载中';
+            try { await loadOriginal(); } catch (error) { if (current()) { original.disabled = false; original.textContent = '重试'; toast(error.message); } }
+          });
+          stage.append(original);
+        }
+        if (automatic) {
+          try { await loadOriginal(); }
+          catch (error) { if (current()) { offerOriginal('重试'); $('#detail-note').textContent = error.message; } }
+        } else offerOriginal();
       }
     } catch (error) { if (current()) { preview.replaceChildren(fallback(asset.type, '暂无预览')); $('#detail-note').textContent = error.message; } }
   }
@@ -1797,11 +1856,16 @@
   });
   $('#sort-select').addEventListener('change', () => { rememberSort(); render(); });
   // 排序菜单：和“···”菜单同一种磨砂样式；当前那项加粗带勾。选中后写回隐藏的 select，沿用原来的排序逻辑。
-  function syncSort() { $('#sort-label').textContent = $('#sort-select').selectedOptions[0]?.textContent || '排序'; }
+  function syncSort() {
+    const select = $('#sort-select');
+    select.querySelector('[value="custom"]').disabled = !currentFolder || isSpecial();
+    if (select.selectedOptions[0]?.disabled) select.value = 'newest';
+    $('#sort-label').textContent = select.selectedOptions[0]?.textContent || '排序';
+  }
   $('#sort-button').addEventListener('click', () => {
     const menu = $('#sort-menu'), select = $('#sort-select');
     if (menu.matches(':popover-open')) { menu.hidePopover(); return; }
-    menu.replaceChildren(...[...select.options].map(option => {
+    menu.replaceChildren(...[...select.options].filter(option => !option.disabled).map(option => {
       const current = option.value === select.value;
       const item = element('button', current ? 'is-current' : '', option.textContent); item.type = 'button';
       item.setAttribute('role', 'menuitemradio'); item.setAttribute('aria-checked', String(current));

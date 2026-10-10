@@ -16,6 +16,23 @@ function browser(entries = new Map(), fetcher) {
   return { api: w.StudioPreviewCache, entries };
 }
 const options = { limit: 1048576, kind: 'video' };
+test('checking for a local original does not download; cached parts survive a new page with account and version isolation', async () => {
+  let requests = 0;
+  const entries = new Map();
+  const b = browser(entries, async () => { requests++; return new Response('local original', { headers: { 'Content-Type': 'image/png' } }); });
+  const parts = ['member', 'image', 'revision-1'];
+  const opts = { kind: 'image', limit: 1024 };
+  assert.equal(await b.api.peek(parts, opts), null);
+  assert.equal(requests, 0);
+  await b.api.load(parts, () => 'https://cdn.test/original', opts);
+  const next = browser(entries, async () => { throw Error('must not request'); });
+  assert.equal(await (await next.api.peek(parts, opts)).blob.text(), 'local original');
+  assert.equal(await next.api.peek(['other-member', 'image', 'revision-1'], opts), null);
+  assert.equal(await next.api.peek(['member', 'image', 'revision-2'], opts), null);
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(next.api.peek(parts, { ...opts, signal: controller.signal }));
+  assert.equal(requests, 1);
+});
 test('expired preview links renew once; cached bytes need neither the stale URL nor another backend request', async () => {
   let downloads = 0, renewals = 0;
   const b = browser(new Map(), async url => {
