@@ -65,6 +65,11 @@ html[data-theme="light"] .view-back { background:#2026290d; color:#37474d; }
 .section-title { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; min-width:0; }
 .breadcrumb { display:flex; flex-wrap:wrap; align-items:center; gap:2px 6px; min-width:0; }
 .breadcrumb h2 { margin:0; overflow-wrap:anywhere; }
+#breadcrumb,#results-text { transform-origin:left center; }
+.heading-rolling { position:relative; clip-path:inset(0 -100vw); }
+.heading-line { display:block; }
+.breadcrumb.heading-line,.breadcrumb.heading-outgoing { display:flex; }
+.heading-outgoing { position:absolute; inset:0 auto auto 0; width:max-content; pointer-events:none; }
 .crumb { padding:4px 6px; margin:0 -6px; border:0; background:transparent; color:var(--muted); font:inherit; font-size:15px; font-weight:600; cursor:pointer; overflow-wrap:anywhere; }
 .crumb-separator { color:var(--muted); opacity:.6; font-size:15px; }
 @media (hover:hover) and (pointer:fine) { .crumb:hover { color:var(--ink); } }

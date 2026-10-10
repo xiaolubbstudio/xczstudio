@@ -21,6 +21,7 @@
     bounce: supportsLinear ? spring(.58) : 'cubic-bezier(.34,1.45,.64,1)',
     snappy: supportsLinear ? spring(.74) : 'cubic-bezier(.3,1.25,.6,1)',
     smooth: supportsLinear ? spring(.9) : 'cubic-bezier(.23,1,.32,1)',
+    inertia: supportsLinear ? spring(.64) : 'cubic-bezier(.45,0,.3,1.12)',
     exit: 'cubic-bezier(.3,0,.8,.15)',
   };
   if (supportsLinear) for (const name of ['bounce', 'snappy', 'smooth']) document.documentElement.style.setProperty(`--spring-${name}`, EASE[name]);
@@ -108,6 +109,86 @@
     const nodes = selector ? [...root.querySelectorAll(selector)] : [root];
     nodes.forEach((node, index) => animate(node, [{ opacity: 0, transform: direction ? `translateX(${direction * 22}px)` : 'translateY(8px) scale(.98)' }, { opacity: 1, offset: .4 }, { opacity: 1, transform: 'none' }], 520, Math.min(index * 18, 90), EASE.snappy));
   }
+
+  // 标题和数量一起更新：同一路径上下换行，换路径或换行布局时轻轻越位再回弹。
+  const headings = new WeakMap();
+  function heading(root, update, context) {
+    const previous = headings.get(root);
+    const targets = ['#breadcrumb', '#results-text'].map(selector => root.querySelector(selector));
+    const rootBefore = root.getBoundingClientRect();
+    const before = targets.map(node => {
+      const box = node.getBoundingClientRect();
+      const lines = [...node.querySelectorAll(':scope > .heading-line, :scope > .heading-outgoing')];
+      // 连续切换时，接住当前可见最多的那行文字，而不是重新从起点播放。
+      const visibleHeight = line => {
+        const rect = line.getBoundingClientRect();
+        return Math.max(0, Math.min(box.bottom, rect.bottom) - Math.max(box.top, rect.top));
+      };
+      const line = lines.sort((a, b) => visibleHeight(b) - visibleHeight(a))[0];
+      const copy = document.createElement(node.id === 'breadcrumb' ? 'div' : 'span');
+      copy.className = node.id === 'breadcrumb' ? 'breadcrumb heading-outgoing' : 'heading-outgoing';
+      copy.append(...[...(line || node).childNodes].map(child => child.cloneNode(true)));
+      for (const child of copy.querySelectorAll('[id]')) child.removeAttribute('id');
+      copy.setAttribute('aria-hidden', 'true'); copy.inert = true;
+      const lineSize = parseFloat(getComputedStyle(node.querySelector('h2') || node).fontSize);
+      return { box, copy, lineSize, transform: line ? getComputedStyle(line).transform : 'none', text: copy.textContent };
+    });
+    previous?.stop();
+    update();
+    const rootAfter = root.getBoundingClientRect();
+    const after = targets.map(node => node.getBoundingClientRect());
+    const state = { context, stop: () => {} };
+    headings.set(root, state);
+    if (!previous || reduced.matches) return;
+    const samePath = previous.context.path === context.path;
+    const rolls = samePath && before.every(({ box, lineSize }, index) =>
+      Math.max(box.height, after[index].height) < lineSize * 1.8 &&
+      Math.abs(box.height - after[index].height) < 2 &&
+      Math.abs((box.top - rootBefore.top) - (after[index].top - rootAfter.top)) < 2);
+    const order = ['all', 'image', 'video', 'audio'];
+    const direction = order.indexOf(context.type) < order.indexOf(previous.context.type) ? -1 : 1;
+    const running = [], cleanups = [];
+    const play = (node, frames, duration, easing) => {
+      const animation = node.animate(frames, { duration, easing, fill: 'both' });
+      running.push(animation);
+    };
+    targets.forEach((node, index) => {
+      const old = before[index], box = after[index];
+      if (!box.width || !box.height) return;
+      const dx = old.box.left - box.left, dy = old.box.top - box.top;
+      if (rolls) {
+        if (old.text !== node.textContent || node.id === 'breadcrumb' && previous.context.type !== context.type) {
+          const incoming = document.createElement(node.id === 'breadcrumb' ? 'div' : 'span');
+          incoming.className = node.id === 'breadcrumb' ? 'breadcrumb heading-line' : 'heading-line';
+          incoming.append(...node.childNodes);
+          node.append(incoming, old.copy);
+          node.classList.add('heading-rolling');
+          // 退出行只移动不缩放；进入行在最终位置稍微越位，然后停稳。
+          play(old.copy, [{ transform: old.transform, opacity: 1 }, { transform: `translateY(${-direction * box.height}px)`, opacity: 0 }], 360, 'cubic-bezier(.42,0,.58,1)');
+          play(incoming, [{ transform: `translateY(${direction * box.height}px)` }, { transform: 'translateY(0)' }], 620, EASE.inertia);
+          cleanups.push(() => {
+            node.replaceChildren(...incoming.childNodes);
+            node.classList.remove('heading-rolling');
+          });
+        }
+        if (Math.abs(dx) > .5 || Math.abs(dy) > .5) play(node,
+          [{ transform: `translate(${dx}px,${dy}px)` }, { transform: 'none' }], 620, EASE.inertia);
+      } else {
+        const scale = old.box.width ? Math.max(.88, Math.min(1.12, old.box.width / box.width)) : .94;
+        play(node, [{ transform: `translate(${dx}px,${dy}px) scale(${scale},.94)`, opacity: .3 }, { transform: 'none', opacity: 1 }], 640, EASE.inertia);
+      }
+    });
+    let stopped = false;
+    state.stop = () => {
+      if (stopped) return;
+      stopped = true;
+      running.forEach(animation => animation.cancel());
+      cleanups.forEach(cleanup => cleanup());
+    };
+    Promise.all(running.map(animation => animation.finished.catch(() => {}))).then(() => {
+      if (headings.get(root) === state) state.stop();
+    });
+  }
   // 底部胶囊（多选操作条）像灵动岛一样从下方展开、收回。
   function reveal(node) {
     node.dataset.state = 'shown'; node.hidden = false;
@@ -168,5 +249,5 @@
     if (!exits.length) { run(); return; }
     Promise.all(exits.map(item => item.finished.catch(() => {}))).then(() => { run(); exits.forEach(item => item.cancel()); });
   }
-  window.StudioMotion = { open, close, grid, reflow, toast, bindDialogs, indicator, swap, pop, reveal, conceal, ease: EASE };
+  window.StudioMotion = { open, close, grid, reflow, toast, bindDialogs, indicator, swap, heading, pop, reveal, conceal, ease: EASE };
 })();

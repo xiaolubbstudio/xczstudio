@@ -15,12 +15,56 @@
     ['星星贴纸.png', '', 600, 600, 1, 48], ['鼓掌.gif', '', 640, 360, 0, 280], ['转场.mp4', '', 1280, 720, 0, 230], ['箭头.png', '', 900, 300, 1, 10],
     ['表情 01.png', '表情包', 500, 500, 1, 30], ['片头.mp4', '开场', 1920, 1080, 0, 20]];
   if (new URLSearchParams(location.search).has('organized')) names.forEach((entry, i) => { entry[1] ||= i % 2 ? '表情包' : '开场'; });
+  if (new URLSearchParams(location.search).has('long-path')) names[1][1] = '图片素材分类和常用表情/比较长的文件夹名称用于手机换行检查';
   // /?demo&many 复制出 400 多份素材，用来测滚动性能。
   if (new URLSearchParams(location.search).has('many')) { const base = names.slice(); for (let k = 1; k < 25; k++) base.forEach(([n, ...rest]) => names.push([n.replace(/(.[^.]+)$/, '-' + k + '$1'), ...rest])); }
   const assets = names.map(([name, folder], i) => ({ id: 'demo-' + i, name, folder, size: Math.round((1.3 + i * 2.7) * 1048576), modified: `2026-09-${String(30 - i).padStart(2, '0')}T10:00:00Z`, added_ms: Date.UTC(2026,9,11,10,0,0) - i * 60000, deleted: false, pending: false, revision: 1, thumb: '', uploader: 'angel_ni' }));
   const favorites = new Set(['demo-1']);
   // /?demo&hover-test checks pointer previews and local-only playback through the real UI handlers.
   const hoverTest = new URLSearchParams(location.search).has('hover-test');
+  // 只在本机记录标题的实际合成动画轨迹，包含连续打断和减少动态效果。
+  const motionTest = new URLSearchParams(location.search).has('motion-test');
+  if (motionTest && new URLSearchParams(location.search).has('reduced')) {
+    const original = window.matchMedia.bind(window);
+    window.matchMedia = query => query === '(prefers-reduced-motion: reduce)' ? { ...original(query), matches: true } : original(query);
+  }
+  if (motionTest) addEventListener('load', () => {
+    const report = document.createElement('pre'); report.id = 'heading-motion-report';
+    report.style.cssText = 'position:fixed;top:0;left:0;z-index:80;background:#fff;color:#111;padding:6px;max-width:55vw;max-height:90px;overflow:auto;pointer-events:none;white-space:pre-wrap;font-size:10px';
+    document.body.append(report);
+    const samples = [];
+    let run = 0;
+    document.addEventListener('click', event => {
+      if (!event.target.closest('[data-type],.folder-preview,#view-back,.crumb')) return;
+      const token = ++run, frames = [];
+      let start, lastBucket = -1;
+      const frame = time => {
+        if (token !== run) return;
+        start ??= time;
+        const heading = document.querySelector('.section-title');
+        const bucket = Math.floor((time - start) / 100);
+        const tracks = heading.getAnimations({ subtree:true }).map(animation => ({
+          target: animation.effect.target.id || animation.effect.target.className,
+          transform: getComputedStyle(animation.effect.target).transform,
+          frames: animation.effect.getKeyframes().map(key => key.transform),
+          overshoot: /1\.0[1-9]/.test(animation.effect.getTiming().easing),
+        }));
+        if (bucket !== lastBucket) { frames.push({ ms: Math.round(time - start), tracks }); lastBucket = bucket; }
+        if (time - start < 750) requestAnimationFrame(frame);
+        else {
+          samples.push({ type: document.querySelector('[data-type][aria-pressed="true"]')?.dataset.type,
+            text: heading.textContent, ghosts: heading.querySelectorAll('.heading-outgoing,.heading-line').length, frames });
+          report.textContent = JSON.stringify(samples.slice(-5));
+        }
+      };
+      requestAnimationFrame(frame);
+    });
+    const rapid = document.createElement('button'); rapid.id = 'heading-rapid-test'; rapid.textContent = '连续切换';
+    rapid.style.cssText = 'position:fixed;top:0;right:70px;z-index:80'; document.body.append(rapid);
+    rapid.onclick = () => ['image','video','audio','all','video','image'].forEach((type, index) => {
+      setTimeout(() => document.querySelector(`[data-type="${type}"]`).click(), index * 70);
+    });
+  });
   const hoverCounts = { api: 0, media: 0 };
   let hoverVideo = null;
   if (hoverTest) addEventListener('load', () => {

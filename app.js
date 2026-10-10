@@ -1165,7 +1165,6 @@
     const crumbs = [[TITLES[activeType], ''], ...parts.map((name, index) => [name, parts.slice(0, index + 1).join('/')])];
     const key = JSON.stringify([activeType, crumbs, canManage()]);
     if (nav.dataset.key === key) return;
-    const first = !nav.dataset.key;
     nav.dataset.key = key;
     nav.replaceChildren(...crumbs.flatMap(([label, path], index) => {
       const separator = element('span', 'crumb-separator', '›'); separator.setAttribute('aria-hidden', 'true');
@@ -1178,7 +1177,6 @@
       }
       return index ? [separator, node] : [node];
     }));
-    if (!first) window.StudioMotion.swap(nav);
   }
 
   function folderCardFor(path, count) {
@@ -1567,7 +1565,18 @@
     $('#empty-state h3').textContent = needsLogin ? '登录后查看素材' : filtered ? '没有找到素材' : activeType === 'trash' ? '回收站是空的' : activeType === 'favorites' ? '还没有收藏' : currentFolder ? '这个文件夹是空的' : '这里暂时没有素材';
     $('#empty-login').hidden = !needsLogin;
     $('#reset-filters').hidden = needsLogin || !filtered;
-    renderBreadcrumb(special);
+    const demoCount = visible.filter((asset) => asset.demo).length;
+    const results = cloudBusy && empty ? '' : `${subfolders.length ? `${subfolders.length} 个文件夹 · ` : ''}${visible.length} 份${demoCount ? ` · ${demoCount} 份演示` : ''}`;
+    const heading = $('.section-title');
+    const headingKey = JSON.stringify([activeType, currentFolder, special, canManage(), results]);
+    if (heading.dataset.key !== headingKey) {
+      window.StudioMotion.heading(heading, () => {
+        renderBreadcrumb(special);
+        $('#view-back').hidden = !special && !currentFolder;
+        $('#results-text').textContent = results;
+      }, { type: activeType, path: special ? `:${activeType}` : currentFolder });
+      heading.dataset.key = headingKey;
+    }
     // 返回键：收藏、回收站回到素材；文件夹里回到上一级。
     $('#view-back').hidden = !special && !currentFolder;
     $('#view-back').setAttribute('aria-label', special ? '返回全部素材' : '返回上一级');
@@ -1577,8 +1586,6 @@
     $('#search-input').placeholder = currentFolder && !special ? `在“${currentFolder.split('/').at(-1)}”中搜索` : '搜索素材，可用拼音或首字母';
     $('#trash-button').classList.toggle('active', activeType === 'trash');
     $('#trash-button').setAttribute('aria-pressed', String(activeType === 'trash'));
-    const demoCount = visible.filter((asset) => asset.demo).length;
-    $('#results-text').textContent = cloudBusy && empty ? '' : `${subfolders.length ? `${subfolders.length} 个文件夹 · ` : ''}${visible.length} 份${demoCount ? ` · ${demoCount} 份演示` : ''}`;
     $('#nav-count').textContent = (isCloud() ? cloudAssets : catalog.assets).filter(a => !a.deleted).length;
     $('#refresh-button').disabled = cloudBusy;
     $('#draft-notice').hidden = !draft;
