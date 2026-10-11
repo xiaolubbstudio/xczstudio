@@ -621,20 +621,30 @@ body .workspace-heading .studio-lockup :is(.logo-chinese,.logo-english) { pointe
 #storage-trigger:focus-visible { outline:2px solid var(--accent); outline-offset:-4px; }
 .storage-meter { z-index:1; overflow:hidden; pointer-events:none; opacity:0; visibility:hidden; transition:opacity 380ms ease,visibility 380ms; --space-percent:0%; --banner-height:220px; }
 .is-showing-space .storage-meter { opacity:1; visibility:visible; }
-.storage-fill { position:absolute; inset:0; background:linear-gradient(90deg,#daf0cf 0%,#97caa7 30%,#dacf97 55%,#d39077 75%,#772836 100%); clip-path:inset(0 calc(100% - var(--space-percent) + 15px) 0 0); opacity:.84; }
-.storage-wave { position:absolute; top:-50%; left:calc(var(--space-percent) - 16px); width:32px; height:200%; color:var(--space-edge); fill:currentColor; opacity:.84; animation:storage-flow 6s linear infinite; animation-play-state:paused; }
-.storage-meter[data-edge="flat"] .storage-wave { display:none; }
-.storage-meter[data-edge="flat"] .storage-fill { clip-path:inset(0 calc(100% - var(--space-percent)) 0 0); }
+.storage-fill { position:absolute; inset:0; background:linear-gradient(90deg,#daf0cf 0%,#97caa7 30%,#dacf97 55%,#d39077 75%,#772836 100%); mask-image:linear-gradient(90deg,#000 0%,#000 calc(var(--space-percent) - 28px),transparent var(--space-percent)); clip-path:inset(0 calc(100% - var(--space-percent)) 0 0); opacity:.84; }
+/* 光带沿占用区域向右输送；边界用倾斜的光刃和扫描亮点，避免水波轮廓。 */
+.storage-flow-lights { position:absolute; inset:0 auto 0 0; width:var(--space-percent); overflow:hidden; }
+.storage-flow-lights::before { content:""; position:absolute; inset:0; opacity:.13; background:repeating-linear-gradient(0deg,transparent 0 31px,rgba(255,255,255,.7) 31px 32px); }
+.storage-flow-lights i { position:absolute; left:-65%; top:24%; width:65%; min-width:40px; height:1px; background:linear-gradient(90deg,transparent,rgba(255,255,255,.15) 30%,#e6fff8 82%,#fff 91%,transparent); box-shadow:0 0 9px rgba(230,255,248,.8); animation:storage-light-stream 4.8s -1.7s linear infinite; animation-play-state:paused; opacity:0; }
+.storage-flow-lights i::before { content:""; position:absolute; inset:-17px -8%; background:linear-gradient(0deg,transparent,rgba(255,255,255,.02) 25%,rgba(255,255,255,.32) 50%,rgba(255,255,255,.02) 75%,transparent); }
+.storage-flow-lights i:nth-child(2) { top:52%; animation-duration:6.2s; animation-delay:-4.1s; }
+.storage-flow-lights i:nth-child(3) { top:81%; animation-duration:5.4s; animation-delay:-.6s; }
+.storage-frontier { position:absolute; inset:0 auto 0 calc(var(--space-percent) - 24px); width:48px; transform:skewX(-8deg); background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--space-edge) 55%,transparent) 42%,rgba(238,255,250,.45) 50%,transparent 80%); mask-image:linear-gradient(0deg,transparent,#000 14%,#000 86%,transparent); }
+.storage-frontier::before { content:""; position:absolute; inset:0 auto 0 24px; width:1px; background:linear-gradient(0deg,transparent,rgba(247,255,251,.92) 30%,rgba(255,255,255,.65) 70%,transparent); box-shadow:0 0 12px rgba(233,255,248,.85); }
+.storage-frontier::after { content:""; position:absolute; top:-28%; left:15px; width:19px; height:28%; background:radial-gradient(ellipse at center,#fff 0%,rgba(225,255,245,.65) 12%,transparent 68%); animation:storage-front-scan 4.5s -1.2s linear infinite; animation-play-state:paused; opacity:0; }
+.storage-meter[data-edge="flat"] .storage-frontier { display:none; }
+.storage-meter[data-edge="flat"] .storage-fill { mask-image:none; }
 .storage-particles { position:absolute; inset:0; overflow:hidden; }
-.storage-particles i { position:absolute; top:var(--y); left:-10px; width:var(--size); height:var(--size); border-radius:50%; background:var(--space-figure); animation:storage-particle var(--duration) var(--delay) linear infinite; animation-play-state:paused; opacity:0; }
-.is-showing-space :is(.storage-wave,.storage-particles i) { animation-play-state:running; }
+.storage-particles i { position:absolute; top:var(--y); left:-40px; width:var(--length); height:1px; background:linear-gradient(90deg,transparent,rgba(127,188,171,.3) 65%,rgba(218,249,237,.85)); box-shadow:0 0 5px rgba(193,235,218,.4); animation:storage-particle var(--duration) var(--delay) linear infinite; animation-play-state:paused; opacity:0; }
+.is-showing-space :is(.storage-flow-lights i,.storage-particles i),.is-showing-space .storage-frontier::after { animation-play-state:running; }
 .storage-percent { position:absolute; left:24px; top:50%; translate:0 -50%; color:var(--space-figure); font-size:calc(var(--banner-height) * 1.15); line-height:1; letter-spacing:-.075em; font-weight:650; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .storage-caption { position:absolute; right:80px; bottom:18px; max-width:calc(100% - 32px); padding:9px 13px; border-radius:12px; color:var(--space-caption); background:var(--space-caption-bg); }
 .storage-caption strong { display:block; font-size:15px; font-weight:550; }
 .storage-caption span { display:block; margin-top:4px; font-size:11px; line-height:1.5; opacity:.8; }
 .storage-caption .storage-mobile-details { display:none; }
-@keyframes storage-flow { from { transform:translateY(0); } to { transform:translateY(-50%); } }
-@keyframes storage-particle { 0% { transform:translate(0,0); opacity:0; } 12%,80% { opacity:.7; } 100% { transform:translate(calc(100vw + 20px),var(--drift)); opacity:0; } }
+@keyframes storage-light-stream { 0% { transform:translateX(0); opacity:0; } 12%,70% { opacity:.85; } 100% { transform:translateX(280%); opacity:0; } }
+@keyframes storage-front-scan { 0% { transform:translateY(0); opacity:0; } 15%,80% { opacity:.8; } 100% { transform:translateY(460%); opacity:0; } }
+@keyframes storage-particle { 0% { transform:translateX(0); opacity:0; } 12%,80% { opacity:.8; } 100% { transform:translateX(calc(100vw + 80px)); opacity:0; } }
 @media (max-width:760px) {
   body .workspace-heading { width:100vw; margin-inline:calc((100% - 100vw) / 2); }
   body .workspace-heading h1.studio-lockup { width:calc(100% - 32px); }
@@ -643,5 +653,6 @@ body .workspace-heading .studio-lockup :is(.logo-chinese,.logo-english) { pointe
   .storage-caption strong { font-size:12px; }
   .storage-caption #storage-details { display:none; }
   .storage-caption .storage-mobile-details { display:block; font-size:11px; margin:0; }
+  .storage-particles i:nth-child(n+9) { display:none; }
 }
-@media (prefers-reduced-motion:reduce) { .storage-meter { transition:none; } .storage-wave,.storage-particles i { animation:none; } .storage-particles { display:none; } }
+@media (prefers-reduced-motion:reduce) { .storage-meter { transition:none; } .storage-flow-lights i,.storage-frontier::after,.storage-particles i { animation:none; } .storage-particles { display:none; } }
