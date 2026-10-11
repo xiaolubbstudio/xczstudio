@@ -142,9 +142,9 @@
   // 容量展示只用目录里已有的统计。悬停、触控和动效均不请求后台。
   const storageHero = $('.workspace-heading'), storageTrigger = $('#storage-trigger'), storageMeter = $('#storage-meter');
   let storageTimer = 0;
-  for (let i = 0; i < 18; i++) {
+  for (let i = 0; i < 5; i++) {
     const particle = document.createElement('i');
-    particle.style.cssText = `--y:${7 + i * 47 % 87}%;--duration:${8 + i % 7}s;--delay:-${i * 1.37}s;--length:${12 + i % 5 * 5}px`;
+    particle.style.cssText = `--y:${[18,48,80,32,66][i]}%;--duration:${10 + i * 1.8}s;--delay:-${i * 3.1}s;--size:${i % 2 ? 2 : 3}px;--drift:${i % 2 ? -8 : 6}px`;
     storageMeter.querySelector('.storage-particles').append(particle);
   }
   new ResizeObserver(entries => storageMeter.style.setProperty('--banner-height', `${entries[0].borderBoxSize?.[0]?.blockSize || entries[0].contentRect.height}px`)).observe(storageHero);
@@ -181,7 +181,7 @@
     const end = stops.findIndex(stop => stop[0] >= ratio), right = stops[Math.max(1, end)], left = stops[Math.max(0, end - 1)];
     const t = (ratio - left[0]) / (right[0] - left[0]);
     storageMeter.style.setProperty('--space-edge', `rgb(${left[1].map((v, i) => Math.round(v + (right[1][i] - v) * t)).join(' ')})`);
-    storageMeter.dataset.edge = ratio > 0 && ratio < 1 ? 'light' : 'flat';
+    storageMeter.dataset.edge = ratio > 0 && ratio < 1 ? 'wave' : 'flat';
     storageMeter.querySelector('.storage-percent').textContent = valid ? `${percentage}%` : '—';
     storageMeter.style.setProperty('--figure-width', String(storageMeter.querySelector('.storage-percent').textContent.length * .6));
     const gb = bytes => (bytes / 1024 ** 3).toLocaleString('zh-CN', { maximumFractionDigits: 2 });
