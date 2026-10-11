@@ -2,6 +2,12 @@
 
 用户已确认设计并批准切换。生产网站改为 OpenList + 中国移动云盘；不再使用 pCloud 登录和目录。原 pCloud 的 48 份素材已按内容核对：38 份已存在，另外 10 份已补入移动云盘，原 pCloud 文件保留。
 
+## 五秒低清预览（2026-10-11）
+
+视频和 GIF 只使用后台自动生成的最多五秒、最大 640×360、保持比例的 MP4，原视频只通过下载获取。Media Transformations 使用本素材库 Worker 的 MEDIA 绑定，公开测试期间转码暂不收费；不启用 R2、付费 Stream 或其他插件绑定。生成发生在首次预览请求；完成后保存到移动云盘“素材预览缓存”并由所有获准成员复用。缓存文件不导入素材列表，不生成封面。源版本改变才重新生成，失败不返回原文件预览。
+
+当前输入须小于 100 MB；不支持的编码、超大文件及服务故障提示下载，不回退原视频。D1 存任务锁和缓存元数据，固定每次预留五秒、每月内部上限 4,000 秒，单个源版本最多三次尝试并退避。该预算与账号剩余额度不同；转换规则及测试优惠可能变更，不能承诺永久免费。
+
 ## 网站素材管理（2026-10-02）
 
 独立 D1 新增 `studio_assets`、`studio_folders`、`studio_catalog_locks`；不修改插件数据库或成员凭据。素材记录包含稳定 ID、云盘文件 ID、物理源路径、显示名称、虚拟文件夹、回收状态和版本号。网页只收到显示信息；云盘凭据仍留在后台。
@@ -32,7 +38,7 @@
 
 2026-10-01 读取 Cloudflare 实际配置：插件有三个 Worker，`eliya-activation` 负责授权校验，`eliya-admin` 是管理后台，两者使用插件自己的 D1；`eliya-downloads` 仅绑定下载静态资源。素材库使用第四个 Worker `xczstudio-openlist-trial`，独立 D1 `7580e77d-5f66-4719-b9ba-953b526fe331`，独立随机 `JWT_SECRET` 和 `ADMIN_PASS`，没有绑定任何插件 Worker、数据库或下载资源。本次部署未修改三个插件 Worker。
 
-素材库配置明确绑定独立数据库 ID。独立后台仓库的 `npm run deploy` 先运行 `scripts/studio-check-isolation.mjs`：核对 Worker 名称、账号、数据库名称和 ID，并拒绝附带其他服务、KV、R2 或 Durable Object 绑定。插件的部署流程保持不变。
+素材库配置明确绑定独立数据库 ID。独立后台仓库的 `npm run deploy` 先运行 `scripts/studio-check-isolation.mjs`：核对 Worker 名称、账号、数据库名称和 ID，并拒绝附带其他服务、KV、R2 或不在白名单的 Durable Object 绑定；仅允许素材库在线成员对象及五秒预览的 MEDIA 绑定。插件的部署流程保持不变。
 
 Worker、数据库和权限独立，但同一个 Cloudflare 账号下的免费额度仍共享；不能把资源隔离理解成额度隔离。后台网址里的 `eliya-activation-cloud.workers.dev` 是账号公共子域，前面的 `xczstudio-openlist-trial` 才是该 Worker 的名称。
 

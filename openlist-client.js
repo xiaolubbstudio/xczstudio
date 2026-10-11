@@ -97,7 +97,7 @@
     return { assets, folders: data.folders, favorites, folderId: settings.folderPath, name: '素材库', access, space, syncing: data.syncing === true || data.space?.refreshing === true };
   }
   async function manage(input, action, body = {}, signal) {
-    if (!['list', 'edit', 'move', 'order', 'trash', 'restore', 'folder', 'favorite', 'backup', 'resolve'].includes(action)) throw new Error('素材操作无效。');
+    if (!['list', 'edit', 'move', 'order', 'trash', 'restore', 'folder', 'favorite', 'backup', 'resolve', 'clip'].includes(action)) throw new Error('素材操作无效。');
     return request(input, 'fs/studio_catalog/' + action, { ...body, path: config(input).folderPath }, sessionFor(input), signal);
   }
   async function profile(input, session, signal) {
@@ -128,7 +128,38 @@
   function downloadUrl() { return '#'; }
   // Signed media links live only in page memory, for 45 seconds, and stay bound to the session.
   const resolvedLinks = new Map();
-  function clearResolved() { resolvedLinks.clear(); }
+  const clipLinks = new Map();
+  function clearResolved() { resolvedLinks.clear(); clipLinks.clear(); }
+  // Generated previews are a separate authorization/cache namespace; never resolve originals here.
+  async function resolveClipCached(input, asset, signal) {
+    signal?.throwIfAborted();
+    const session = sessionFor(input);
+    if (!session) { const error = new Error('请先登录素材库。'); error.code = 401; throw error; }
+    if (!asset.managed || !asset.id) throw new Error('暂无预览，可下载原文件。');
+    const key = JSON.stringify([config(input), asset.id, asset.modified || asset.date, asset.sizeMB, asset.revision, '360p-5s-v1']);
+    for (const [oldKey, entry] of clipLinks) if (entry.expires <= Date.now() || entry.token !== session.token) clipLinks.delete(oldKey);
+    let entry = clipLinks.get(key);
+    if (!entry) {
+      // First generation can take 75 seconds; in-flight authorization stays shared until it settles.
+      entry = { token: session.token, expires: Infinity };
+      clipLinks.set(key, entry);
+      while (clipLinks.size > 64) clipLinks.delete(clipLinks.keys().next().value);
+      entry.promise = manage(input, 'clip', { id: asset.id }, root.AbortSignal.timeout(120000)).then(data => {
+        if (data?.profile !== '360p-5s-v1' || !Number.isFinite(data.duration) || !(data.duration > 0 && data.duration <= 5)) throw new Error('暂无预览，可下载原文件。');
+        const url = mediaUrl(data.preview_url, input);
+        if (!url) throw new Error('暂无预览，可下载原文件。');
+        entry.expires = Date.now() + 45000;
+        return url;
+      }).catch(error => {
+        if (clipLinks.get(key) === entry) clipLinks.delete(key);
+        throw error;
+      });
+    }
+    const url = await entry.promise;
+    signal?.throwIfAborted();
+    if (sessionFor(input)?.token !== session.token) throw new Error('账号已变化，请重新打开素材。');
+    return url;
+  }
   async function resolveCached(input, asset, signal, force = false) {
     signal?.throwIfAborted();
     const session = sessionFor(input);
@@ -220,7 +251,7 @@
     progress?.(100);
     return result;
   }
-  const api = { config, request, mediaUrl, list, manage, directory, profile, memberAccess, resolve, resolveCached, clearResolved, resolvePreview, downloadUrl, uploadLocation, upload };
+  const api = { config, request, mediaUrl, list, manage, directory, profile, memberAccess, resolve, resolveCached, resolveClipCached, clearResolved, resolvePreview, downloadUrl, uploadLocation, upload };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.OpenListClient = api;
 })(typeof window === 'undefined' ? globalThis : window);

@@ -14,6 +14,72 @@ function browser(fetch, persistent = new Map()) {
   return scope;
 }
 const response = (data, code = 200) => ({ ok: code === 200, status: code, json: async () => ({ code, data }) });
+function clipSession(b, token = 'clip-fixture-token', clock = Date.now()) {
+  b.localStorage.setItem('studio-openlist-session-v1', JSON.stringify({ endpoint: input.folderUrl.slice(0, -1), folderPath: '/', username: 'reader', role: 0, token, created: clock, expires: clock + 3600000 }));
+}
+test('generated clips authorize once for hover/detail, expire, and never persist signed metadata', async () => {
+  const calls = [], saved = new Map(); let clock = Date.now();
+  const b = browser(async (url, options) => {
+    calls.push({ url, options });
+    assert.equal(url, 'https://library.example.test/api/fs/studio_catalog/clip');
+    assert.deepEqual(JSON.parse(options.body), { id: 'movie', path: '/' });
+    return response({ preview_url: 'https://cdn.example.test/clip.mp4?sign=clip-private-' + calls.length, duration: 5, profile: '360p-5s-v1' });
+  }, saved);
+  b.Date = { now: () => clock }; clipSession(b, 'clip-fixture-token', clock);
+  const movie = { id: 'movie', managed: true, revision: 1, sizeMB: 1024 };
+  const [a, c] = await Promise.all([b.OpenListClient.resolveClipCached(input, movie), b.OpenListClient.resolveClipCached(input, movie)]);
+  assert.equal(a, c); assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.headers.Authorization, 'clip-fixture-token');
+  await b.OpenListClient.resolveClipCached(input, movie); assert.equal(calls.length, 1);
+  clock += 46000; await b.OpenListClient.resolveClipCached(input, movie); assert.equal(calls.length, 2);
+  await b.OpenListClient.resolveClipCached(input, { ...movie, revision: 2 }); assert.equal(calls.length, 3);
+  clipSession(b, 'other-clip-session', clock);
+  await b.OpenListClient.resolveClipCached(input, movie); assert.equal(calls.length, 4);
+  b.OpenListClient.clearResolved(); await b.OpenListClient.resolveClipCached(input, movie); assert.equal(calls.length, 5);
+  assert.equal([...saved.values()].some(value => value.includes('clip-private-')), false);
+});
+test('clip failures and invalid profiles never resolve originals, and remain retryable', async () => {
+  let result = { preview_url: 'https://cdn.example.test/small.mp4', duration: 5, profile: '360p-5s-v1' }, code = 200;
+  const routes = [];
+  const b = browser(async url => { routes.push(new URL(url).pathname); return response(result, code); }); clipSession(b);
+  const asset = { id: 'mov', managed: true };
+  for (code of [409, 413, 415, 503]) await assert.rejects(b.OpenListClient.resolveClipCached(input, asset), error => error.code === code);
+  code = 200;
+  for (result of [
+    { preview_url: 'https://cdn.example.test/raw.mp4', duration: 10, profile: '360p-5s-v1' },
+    { preview_url: 'https://cdn.example.test/raw.mp4', duration: 5, profile: 'original' },
+    { preview_url: '', duration: 5, profile: '360p-5s-v1' },
+    { preview_url: 'https://cdn.example.test/clip.mp4?token=secret', duration: 5, profile: '360p-5s-v1' },
+    { preview_url: 'https://cdn.example.test/clip.mp4', duration: '5', profile: '360p-5s-v1' },
+  ]) await assert.rejects(b.OpenListClient.resolveClipCached(input, asset));
+  result = { preview_url: '/small.mp4', duration: 2.1, profile: '360p-5s-v1' };
+  assert.equal(await b.OpenListClient.resolveClipCached(input, asset), 'https://library.example.test/small.mp4');
+  await assert.rejects(b.OpenListClient.resolveClipCached(input, { id: 'unmanaged' }));
+  assert.ok(routes.every(route => route.endsWith('/clip')));
+});
+test('closing one clip caller does not cancel another; changed sessions cannot consume old metadata', async () => {
+  let finish;
+  const b = browser(async () => { await new Promise(resolve => { finish = resolve; }); return response({ preview_url: 'https://cdn.example.test/small.mp4', duration: 5, profile: '360p-5s-v1' }); });
+  clipSession(b); const asset = { id: 'gif', managed: true }, closing = new AbortController();
+  const first = b.OpenListClient.resolveClipCached(input, asset, closing.signal), second = b.OpenListClient.resolveClipCached(input, asset);
+  closing.abort(); finish(); await assert.rejects(first); assert.equal(await second, 'https://cdn.example.test/small.mp4');
+  b.OpenListClient.clearResolved();
+  const pending = b.OpenListClient.resolveClipCached(input, asset);
+  clipSession(b, 'different-member'); finish(); await assert.rejects(pending, /账号已变化/);
+});
+test('slow first generation stays shared beyond 75 seconds and has a 120-second deadline', async () => {
+  let finish, requests = 0, clock = Date.now(), requestedTimeout;
+  const b = browser(async () => { requests++; await new Promise(resolve => { finish = resolve; }); return response({ preview_url: 'https://cdn.example.test/small.mp4', duration: 5, profile: '360p-5s-v1' }); });
+  b.Date = { now: () => clock }; b.AbortSignal = { timeout: ms => { requestedTimeout = ms; return AbortSignal.timeout(ms); } };
+  clipSession(b, 'slow-generation-token', clock);
+  const asset = { id: 'slow', managed: true };
+  const first = b.OpenListClient.resolveClipCached(input, asset);
+  clock += 76000;
+  const second = b.OpenListClient.resolveClipCached(input, asset);
+  assert.equal(requests, 1); assert.equal(requestedTimeout, 120000);
+  finish(); assert.equal(await first, await second);
+  clock += 44000; await b.OpenListClient.resolveClipCached(input, asset); assert.equal(requests, 1);
+});
 test('quota travels with the catalog; invalid statistics cannot render as available space', async () => {
   let requests = 0;
   let space = { total: 20 * 1024 ** 3, used: 7 * 1024 ** 3, source: 'cloud', updatedAt: Date.now(), refreshing: true };

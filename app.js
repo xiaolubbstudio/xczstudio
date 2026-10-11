@@ -214,7 +214,16 @@
     } catch { return 'unknown'; }
   }
   function previewKey(input, session, asset, part) {
+    if (part === CLIP_PART) return [input.provider || 'pcloud', input.folderUrl || '', input.folderPath || '/', session?.username || session?.uid || 'public', asset.id, asset.modified || asset.date, asset.sizeMB, part, asset.revision || 0];
     return [input.provider || 'pcloud', input.folderUrl || '', input.folderPath || '/', session?.username || session?.uid || 'public', asset.id, asset.modified || asset.date, asset.sizeMB, part, 'original-v1'];
+  }
+  const CLIP_PART = 'clip-360p-5s-v1', CLIP_LIMIT = 8 * 1048576;
+  // Older GIF thumbnails could contain the original animation; do not reuse that namespace.
+  const thumbnailPart = asset => kindOf(asset) === 'gif' ? 'poster-clip5s-v1' : asset.type === 'video' ? 'poster' : 'thumbnail';
+  function loadClip(input, session, asset, signal) {
+    if (asset.provider !== 'openlist' || !asset.managed || !session) return Promise.reject(new Error('暂无预览，可下载原文件。'));
+    return window.StudioPreviewCache.load(previewKey(input, session, asset, CLIP_PART),
+      () => window.OpenListClient.resolveClipCached(input, asset, signal), { signal, kind: 'video', limit: CLIP_LIMIT });
   }
   function clearThumbnails() {
     closeHoverPreview();
@@ -230,7 +239,7 @@
     if (!asset || asset.deleted || asset.pending || (!asset.previewUrl && !asset.cachedPreview && !(asset.provider === 'openlist' && asset.managed)) || asset.type === 'audio' || asset.type === 'other' || (asset.provider === 'openlist' && !session)) return;
     // 演示视频的 previewUrl 可能是视频本身，不能作为自动缩略图加载。
     if (!asset.cloud && !['image', 'animation'].includes(asset.type)) return;
-    const parts = previewKey(input, session, asset, asset.type === 'video' ? 'poster' : 'thumbnail');
+    const parts = previewKey(input, session, asset, thumbnailPart(asset));
     const id = JSON.stringify(parts);
     let item = thumbnails.get(id);
     if (item && !item.url && item.source !== asset.previewUrl) { thumbnails.delete(id); item = null; }
@@ -264,7 +273,7 @@
     const scope = JSON.stringify([input.provider, input.folderUrl, input.folderPath, session?.username || session?.uid || 'public', session?.created]);
     if (scope !== thumbnailScope) { clearThumbnails(); thumbnailScope = scope; }
     const assets = new Map(allAssets().map(asset => [asset.id, asset]));
-    const valid = new Set([...assets.values()].map(asset => JSON.stringify(previewKey(input, session, asset, asset.type === 'video' ? 'poster' : 'thumbnail'))));
+    const valid = new Set([...assets.values()].map(asset => JSON.stringify(previewKey(input, session, asset, thumbnailPart(asset)))));
     for (const [id, item] of thumbnails) if (!valid.has(id)) { if (item.url) URL.revokeObjectURL(item.url); thumbnails.delete(id); }
     const show = button => showThumbnail(button, assets.get(button.closest('.asset-card').dataset.id));
     const buttons = $('#asset-grid').querySelectorAll('.preview-button');
@@ -1216,6 +1225,7 @@
         const thumb = element('span'); thumb.append(fallback(asset.type));
         const kind = kindOf(asset);
         if (kind === 'gif' || kind === 'video') thumb.append(element('span', 'folder-peek-badge', kind === 'gif' ? 'GIF' : '视频'));
+        bindHoverPreview(thumb, asset);
         return thumb;
       },
       loadThumb: showThumbnail,
@@ -1306,7 +1316,7 @@
   const kindOf = asset => asset.type === 'animation' || (asset.type === 'image' && /.(gif|apng)$/i.test(asset.name)) ? 'gif' : KINDS.some(([kind]) => kind === asset.type) ? asset.type : 'other';
   const kindRank = asset => KINDS.findIndex(([kind]) => kind === kindOf(asset));
 
-  // Hover reads only bytes already on this device. Original media still needs an explicit click.
+  // Static images reuse local bytes; video/GIF hover loads only the generated five-second clip.
   function closeHoverPreview() {
     clearTimeout(hoverTimer); clearTimeout(hoverCloseTimer);
     if (!hoverPreview) return;
@@ -1357,18 +1367,22 @@
     node.addEventListener('pointerleave', () => { hoverCloseTimer = setTimeout(closeHoverPreview, 180); });
     const input = { ...catalog.config }, session = memberSession();
     try {
-      // Avoid materializing very large complete cached videos just for a hover.
-      const video = kind === 'video';
-      if (video && !(asset.sizeMB > 0 && asset.sizeMB <= 32)) return;
-      const saved = await window.StudioPreviewCache.peek(previewKey(input, session, asset, video ? 'video' : 'image'), { signal: controller.signal, kind: video ? 'video' : 'image', limit: (video ? 32 : 20) * 1048576 });
+      const video = kind === 'video' || kind === 'gif';
+      const saved = video ? await loadClip(input, session, asset, controller.signal)
+        : await window.StudioPreviewCache.peek(previewKey(input, session, asset, 'image'), { signal: controller.signal, kind: 'image', limit: 20 * 1048576 });
       if (!saved || hoverPreview !== state || !button.isConnected) return;
       const url = URL.createObjectURL(saved.blob); state.urls.push(url);
       const media = element(video ? 'video' : 'img'); media.src = url;
       if (video) { media.muted = true; media.loop = true; media.preload = 'none'; media.setAttribute('playsinline', ''); }
       else { media.alt = asset.name; media.draggable = false; }
       stage.replaceChildren(media);
-      if (video) media.play().catch(() => {});
-    } catch { /* Cache misses and closing a hover never cause an original fetch. */ }
+      if (video) {
+        media.addEventListener('error', () => { if (hoverPreview === state) stage.replaceChildren(fallback(asset.type, '暂无预览，可下载原文件')); }, { once: true });
+        media.play().catch(() => {});
+      }
+    } catch {
+      if (hoverPreview === state && !controller.signal.aborted && (kind === 'video' || kind === 'gif')) stage.replaceChildren(fallback(asset.type, '暂无预览，可下载原文件'));
+    }
   }
   document.addEventListener('scroll', closeHoverPreview, { passive: true, capture: true });
   addEventListener('resize', closeHoverPreview);
@@ -1642,9 +1656,10 @@
     for (const x of [5, 12, 19]) { const dot = document.createElementNS(svg.namespaceURI, 'circle'); dot.setAttribute('cx', x); dot.setAttribute('cy', '12'); dot.setAttribute('r', '1.8'); dot.setAttribute('fill', 'currentColor'); svg.append(dot); }
     return svg;
   }
-  // 复制图片：可直接粘贴到聊天、PS 或剪辑软件。剪贴板只收 PNG，GIF 会变成第一帧。
-  const canCopy = asset => asset.type === 'image' && asset.provider === 'openlist' && Boolean(navigator.clipboard?.write && window.ClipboardItem);
+  // 只复制静态图片；动图原件仅通过下载获取。
+  const canCopy = asset => asset.type === 'image' && kindOf(asset) !== 'gif' && asset.provider === 'openlist' && Boolean(navigator.clipboard?.write && window.ClipboardItem);
   function copyImage(asset) {
+    if (!canCopy(asset)) return;
     const input = { ...catalog.config }, session = memberSession();
     const png = (async () => {
       const result = await window.StudioPreviewCache.load(previewKey(input, session, asset, 'image'), () => window.OpenListClient.resolveCached(input, asset, AbortSignal.timeout(20000)), { kind: 'image', limit: 20 * 1048576 });
@@ -1854,7 +1869,7 @@
     download.replaceChildren(icon(asset.demo || asset.cloud ? 'file-download' : 'external-link'), document.createTextNode(asset.demo || ['google', 'openlist'].includes(asset.provider) ? '下载' : asset.cloud ? '下载 ZIP' : '在 pCloud 获取原文件'));
     if (asset.demo || asset.cloud && asset.provider !== 'google') download.removeAttribute('target'); else download.target = '_blank';
     const source = $('#detail-source');
-    source.hidden = !asset.cloud || asset.provider === 'openlist';
+    source.hidden = !asset.cloud || asset.provider === 'openlist' || ['video', 'gif'].includes(kindOf(asset));
     source.href = safeUrl(asset.sourceUrl);
     source.replaceChildren(icon('external-link'), document.createTextNode(asset.provider === 'google' ? '在 Drive 预览' : 'pCloud 预览'));
     download.onclick = asset.provider === 'openlist' ? event => downloadOpenList(event, asset) : asset.cloud ? () => toast(asset.provider === 'google' ? '已发起原文件下载' : '已发起 ZIP 下载') : null;
@@ -1889,7 +1904,7 @@
       else container.replaceChildren(image);
     }
     async function showPoster(stage) {
-      const part = asset.type === 'video' ? 'poster' : 'thumbnail';
+      const part = thumbnailPart(asset);
       // If the card is still loading, reuse its result rather than downloading the same bytes twice.
       const thumbnail = thumbnails.get(JSON.stringify(previewKey(input, session, asset, part)));
       if (thumbnail?.promise) await thumbnail.promise;
@@ -1905,8 +1920,21 @@
         play.disabled = true; play.textContent = '加载中';
         stage.dataset.playing = '1';
         try {
-          // Older complete local previews are reusable; new playback streams directly from the cloud.
-          const local = await cachedPart(audio ? 'audio' : 'video', audio ? 'audio' : 'video', (audio ? 20 : 512) * 1048576);
+          if (!audio) {
+            const clip = await loadClip(input, session, asset, controller.signal);
+            if (!current()) return;
+            const url = URL.createObjectURL(clip.blob); previewObjectUrls.push(url);
+            const media = element('video'); media.controls = true; media.preload = 'none'; media.src = url;
+            media.setAttribute('playsinline', ''); media.setAttribute('controlslist', 'nodownload');
+            media.addEventListener('error', () => {
+              if (!current() || !media.isConnected) return;
+              media.pause(); media.removeAttribute('src'); media.load();
+              stage.replaceChildren(fallback(asset.type, '暂无预览，可下载原文件'));
+            }, { once: true });
+            stage.replaceChildren(media); media.play().catch(() => {}); return;
+          }
+          // Audio keeps its existing original playback path and small local cache.
+          const local = await cachedPart('audio', 'audio', 20 * 1048576);
           const url = local || await originalSource();
           if (!current() || !url) return;
           const media = element(audio ? 'audio' : 'video'); media.controls = true; media.preload = 'none'; media.src = url;
@@ -1928,22 +1956,26 @@
             stage.replaceChildren(fallback(asset.type, '网页无法播放，请下载'));
           });
           stage.replaceChildren(media); media.play().catch(() => {});
-        } catch (error) { if (current()) { delete stage.dataset.playing; play.disabled = false; play.replaceChildren(icon('play'), document.createTextNode('重试')); toast(error.message); } }
+        } catch (error) {
+          if (current()) {
+            delete stage.dataset.playing;
+            if (!audio) stage.replaceChildren(fallback(asset.type, '暂无预览，可下载原文件'));
+            else { play.disabled = false; play.replaceChildren(icon('play'), document.createTextNode('重试')); toast(error.message); }
+          }
+        }
       });
       if (playNow) play.click();
     }
     try {
-      if (asset.type === 'video' || asset.type === 'audio') {
+      if (asset.type === 'video' || asset.type === 'audio' || kindOf(asset) === 'gif') {
         const audio = asset.type === 'audio';
         const stage = element('div', 'preview-stage');
         preview.replaceChildren(stage);
         if (audio) stage.append(audioArt());
         if (!current()) return;
         if (!stage.children.length) stage.append(fallback('video'));
-        const extension = asset.name.split('.').pop().toLowerCase();
-        const supported = audio || ['mp4', 'webm', 'm4v'].includes(extension);
-        if (supported && (asset.provider === 'openlist' || !asset.cloud)) playback(stage, audio);
-        else stage.append(element('span', 'preview-caption', '下载后播放'));
+        if (asset.provider === 'openlist' || audio && !asset.cloud) playback(stage, audio);
+        else stage.append(element('span', 'preview-caption', '暂无预览，可下载原文件'));
         if (!audio) showPoster(stage).catch(() => {}); // The play button never waits on the cover image.
       } else if (asset.type === 'other') {
         preview.replaceChildren(fallback('other')); // 非图片、视频、音频不读取原件，直接下载。
@@ -1963,9 +1995,9 @@
             showImage(url, stage, !force && asset.provider === 'openlist' ? () => loadOriginal(true).catch(error => { if (current()) toast(error.message); }) : undefined);
           }
         }
-        const automatic = !asset.cloud || (asset.sizeMB > 0 && asset.sizeMB <= (kindOf(asset) === 'gif' ? 20 : 2));
+        const automatic = !asset.cloud || (asset.sizeMB > 0 && asset.sizeMB <= 2);
         function offerOriginal(label) {
-          const original = element('button', 'button primary preview-play', kindOf(asset) === 'gif' ? '播放' : '原图'); original.type = 'button';
+          const original = element('button', 'button primary preview-play', '原图'); original.type = 'button';
           if (label) original.textContent = label;
           original.addEventListener('click', async () => {
             original.disabled = true; original.textContent = '加载中';
